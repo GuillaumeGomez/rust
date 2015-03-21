@@ -1088,7 +1088,7 @@ impl<K, V, S> HashMap<K, V, S>
     ///     Some(x) => *x = "b",
     ///     None => (),
     /// }
-    /// assert_eq!(map[1], "b");
+    /// assert_eq!(map[&1], "b");
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn get_mut<Q: ?Sized>(&mut self, k: &Q) -> Option<&mut V>
@@ -1111,7 +1111,7 @@ impl<K, V, S> HashMap<K, V, S>
     ///
     /// map.insert(37, "b");
     /// assert_eq!(map.insert(37, "c"), Some("b"));
-    /// assert_eq!(map[37], "c");
+    /// assert_eq!(map[&37], "c");
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
@@ -1244,6 +1244,7 @@ impl<K, V, S> Default for HashMap<K, V, S>
     }
 }
 
+#[cfg(stage0)]
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<K, Q: ?Sized, V, S> Index<Q> for HashMap<K, V, S>
     where K: Eq + Hash + Borrow<Q>,
@@ -1258,6 +1259,7 @@ impl<K, Q: ?Sized, V, S> Index<Q> for HashMap<K, V, S>
     }
 }
 
+#[cfg(stage0)]
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<K, V, S, Q: ?Sized> IndexMut<Q> for HashMap<K, V, S>
     where K: Eq + Hash + Borrow<Q>,
@@ -1266,6 +1268,34 @@ impl<K, V, S, Q: ?Sized> IndexMut<Q> for HashMap<K, V, S>
 {
     #[inline]
     fn index_mut<'a>(&'a mut self, index: &Q) -> &'a mut V {
+        self.get_mut(index).expect("no entry found for key")
+    }
+}
+
+#[cfg(not(stage0))]
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, K, Q: ?Sized, V, S> Index<&'a Q> for HashMap<K, V, S>
+    where K: Eq + Hash + Borrow<Q>,
+          Q: Eq + Hash,
+          S: HashState,
+{
+    type Output = V;
+
+    #[inline]
+    fn index(&self, index: &Q) -> &V {
+        self.get(index).expect("no entry found for key")
+    }
+}
+
+#[cfg(not(stage0))]
+#[stable(feature = "rust1", since = "1.0.0")]
+impl<'a, K, V, S, Q: ?Sized> IndexMut<&'a Q> for HashMap<K, V, S>
+    where K: Eq + Hash + Borrow<Q>,
+          Q: Eq + Hash,
+          S: HashState,
+{
+    #[inline]
+    fn index_mut(&mut self, index: &Q) -> &mut V {
         self.get_mut(index).expect("no entry found for key")
     }
 }
@@ -2197,7 +2227,7 @@ mod test_map {
         map.insert(2, 1);
         map.insert(3, 4);
 
-        assert_eq!(map[2], 1);
+        assert_eq!(map[&2], 1);
     }
 
     #[test]
@@ -2209,7 +2239,7 @@ mod test_map {
         map.insert(2, 1);
         map.insert(3, 4);
 
-        map[4];
+        map[&4];
     }
 
     #[test]
