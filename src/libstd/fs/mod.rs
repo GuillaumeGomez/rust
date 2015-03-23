@@ -269,7 +269,11 @@ impl OpenOptions {
     /// of overwriting previous contents.
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn append(&mut self, append: bool) -> &mut OpenOptions {
-        self.0.append(append); self
+        self.0.append(append);
+        if append {
+            self.write(true);
+        }
+        self
     }
 
     /// Set the option for truncating a previous file.
