@@ -576,7 +576,9 @@ impl<'a, 'v> Visitor<'v> for Resolver<'a> {
                 self.visit_generics(&sig.generics);
                 MethodRibKind(!sig.decl.has_self())
             }
-            FnKind::Closure => ClosureRibKind(node_id),
+            FnKind::Closure => {
+                ClosureRibKind(node_id)
+            }
         };
         self.resolve_function(rib_kind, declaration, block);
     }
@@ -1617,6 +1619,8 @@ impl<'a> Resolver<'a> {
                         this.visit_generics(generics);
                         walk_list!(this, visit_ty_param_bound, bounds);
 
+                        let mut types = Vec::new();
+                        let mut methods = Vec::new();
                         for trait_item in trait_items {
                             match trait_item.node {
                                 TraitItemKind::Const(_, ref default) => {
@@ -1631,6 +1635,12 @@ impl<'a> Resolver<'a> {
                                         visit::walk_trait_item(this, trait_item)
                                     }
                                 }
+                                TraitItemKind::Type(..) => {
+                                    this.with_type_parameter_rib(NoTypeParameters, |this| {
+                                        visit::walk_trait_item(this, trait_item)
+                                    });
+                                    types.push(format!("{}", trait_item.ident));
+                                }
                                 TraitItemKind::Method(ref sig, _) => {
                                     let type_parameters =
                                         HasTypeParameters(&sig.generics,
@@ -1639,13 +1649,37 @@ impl<'a> Resolver<'a> {
                                     this.with_type_parameter_rib(type_parameters, |this| {
                                         visit::walk_trait_item(this, trait_item)
                                     });
-                                }
-                                TraitItemKind::Type(..) => {
-                                    this.with_type_parameter_rib(NoTypeParameters, |this| {
-                                        visit::walk_trait_item(this, trait_item)
-                                    });
+                                    methods.push(sig.clone());
                                 }
                             };
+                        }
+                        if types.len() > 0 {
+                            for method in methods {
+                                for arg in method.decl.inputs.iter() {
+                                    if let Some(paths) = arg.ty.get_path() {
+                                        for path in paths {
+                                            if path.segments.len() == 2 &&
+                                               &format!("{}",
+                                                        path.segments[0].identifier) == "Self" {
+                                                let name = format!("{}",
+                                                                   path.segments[1].identifier);
+                                                let mut found = false;
+                                                for ty in types.iter() {
+                                                    if ty == &name {
+                                                        found = true;
+                                                        break;
+                                                    }
+                                                }
+                                                if found == false {
+                                                    let error_variant =
+                                                        ResolutionError::UndeclaredAssociatedType;
+                                                    resolve_error(this, arg.ty.span, error_variant);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     });
                 });

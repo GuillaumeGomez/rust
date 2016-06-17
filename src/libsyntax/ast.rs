@@ -1578,6 +1578,32 @@ impl fmt::Debug for Ty {
     }
 }
 
+impl Ty {
+    pub fn get_path(&self) -> Option<Vec<Path>> {
+        match self.node {
+            TyKind::Vec(ref p) | TyKind::FixedLengthVec(ref p, _) => p.get_path(),
+            TyKind::Ptr(ref p) | TyKind::Rptr(_, ref p) => p.ty.get_path(),
+            TyKind::Tup(ref v) => {
+                let mut res = Vec::new();
+                for path in v {
+                    if let Some(p) = path.get_path() {
+                        for path in p {
+                            res.push(path);
+                        }
+                    }
+                }
+                if res.len() > 0 {
+                    Some(res)
+                } else {
+                    None
+                }
+            }
+            TyKind::Path(_, ref p) => Some(vec!(p.clone())),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct BareFnTy {
     pub unsafety: Unsafety,
