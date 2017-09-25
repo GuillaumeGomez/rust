@@ -1194,11 +1194,17 @@ impl DocFolder for Cache {
             match parent {
                 (parent, Some(path)) if is_inherent_impl_item || (!self.stripped_mod) => {
                     debug_assert!(!item.is_stripped());
+                    let is_parent_masked = if let Some(parent) = parent {
+                        self.masked_crates.contains(&parent.krate)
+                    } else {
+                        false
+                    };
 
                     // A crate has a module at its root, containing all items,
                     // which should not be indexed. The crate-item itself is
                     // inserted later on when serializing the search-index.
-                    if item.def_id.index != CRATE_DEF_INDEX {
+                    if item.def_id.index != CRATE_DEF_INDEX && !item.attrs.has_doc_masked() &&
+                       !is_parent_masked {
                         self.search_index.push(IndexItem {
                             ty: item.type_(),
                             name: s.to_string(),
