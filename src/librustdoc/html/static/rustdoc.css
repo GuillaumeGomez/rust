@@ -215,6 +215,15 @@ nav.sub {
 	word-break: break-word; /* Chrome, non-standard */
 }
 
+body.source > nav.sidebar {
+	width: 200px;
+	position: absolute;
+	left: 0;
+	top: 0;
+	min-height: 100%;
+	z-index: initial;
+}
+
 .location:empty {
 	border: none;
 }
