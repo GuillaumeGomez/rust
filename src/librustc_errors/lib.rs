@@ -509,12 +509,15 @@ impl Handler {
     pub fn span_unimpl<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
         self.span_bug(sp, &format!("unimplemented {}", msg));
     }
-    pub fn fatal(&self, msg: &str) -> FatalError {
+    pub fn fatal_err(&self, msg: &str) {
         if self.flags.treat_err_as_bug {
             self.bug(msg);
         }
         let mut db = DiagnosticBuilder::new(self, Fatal, msg);
         db.emit();
+    }
+    pub fn fatal(&self, msg: &str) -> FatalError {
+        self.fatal_err(msg);
         FatalError
     }
     pub fn err(&self, msg: &str) {
@@ -567,8 +570,39 @@ impl Handler {
                 s = format!("aborting due to {} previous errors", self.err_count());
             }
         }
+        let err = self.fatal(&s);
 
-        self.fatal(&s).raise();
+        let can_show_explain = self.emitter.borrow().should_show_explain();
+        let are_there_diagnostics = !self.tracked_diagnostic_codes.borrow().is_empty();
+        if can_show_explain && are_there_diagnostics {
+            let mut error_codes =
+                self.tracked_diagnostic_codes.borrow()
+                                             .clone()
+                                             .into_iter()
+                                             .filter_map(|x| match x {
+                                                 DiagnosticId::Error(ref s) => Some(s.clone()),
+                                                 _ => None,
+                                             })
+                                             .collect::<Vec<_>>();
+            if !error_codes.is_empty() {
+                error_codes.sort();
+                if error_codes.len() > 1 {
+                    let limit = if error_codes.len() > 9 { 9 } else { error_codes.len() };
+                    self.fatal_err(&format!("Some errors occurred: {}{}",
+                                            error_codes[..limit].join(", "),
+                                            if error_codes.len() > 9 { "..." } else { "." }));
+                    self.fatal_err(&format!("For more information about an error, try \
+                                             `rustc --explain {}`.",
+                                            &error_codes[0]));
+                } else {
+                    self.fatal_err(&format!("For more information about this error, try \
+                                             `rustc --explain {}`.",
+                                            &error_codes[0]));
+                }
+            }
+        }
+
+        err.raise();
     }
     pub fn emit(&self, msp: &MultiSpan, msg: &str, lvl: Level) {
         if lvl == Warning && !self.flags.can_emit_warnings {

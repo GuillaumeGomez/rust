@@ -21,7 +21,8 @@ use atty;
 use std::borrow::Cow;
 use std::io::prelude::*;
 use std::io;
-use std::collections::{HashMap, HashSet};
+use term;
+use std::collections::HashMap;
 use std::cmp::min;
 use termcolor::{StandardStream, ColorChoice, ColorSpec, BufferWriter};
 use termcolor::{WriteColor, Color, Buffer};
@@ -33,6 +34,11 @@ const ANONYMIZED_LINE_NUM: &str = "LL";
 pub trait Emitter {
     /// Emit a structured diagnostic.
     fn emit(&mut self, db: &DiagnosticBuilder);
+
+    /// Check if should show explanations about "rustc --explain"
+    fn should_show_explain(&self) -> bool {
+        true
+    }
 }
 
 impl Emitter for EmitterWriter {
@@ -80,6 +86,10 @@ impl Emitter for EmitterWriter {
                                    &children,
                                    &suggestions);
     }
+
+    fn should_show_explain(&self) -> bool {
+        !self.short_message
+    }
 }
 
 /// maximum number of lines we will print for each error; arbitrary.
@@ -114,7 +124,6 @@ pub struct EmitterWriter {
     cm: Option<Lrc<CodeMapper>>,
     short_message: bool,
     teach: bool,
-    error_codes: HashSet<String>,
     ui_testing: bool,
 }
 
@@ -124,48 +133,29 @@ struct FileWithAnnotatedLines {
     multiline_depth: usize,
 }
 
-impl Drop for EmitterWriter {
-    fn drop(&mut self) {
-        if !self.short_message && !self.error_codes.is_empty() {
-            let mut error_codes = self.error_codes.clone().into_iter().collect::<Vec<_>>();
-            let mut dst = self.dst.writable();
-            error_codes.sort();
-            if error_codes.len() > 1 {
-                let limit = if error_codes.len() > 9 { 9 } else { error_codes.len() };
-                writeln!(dst,
-                         "You've got a few errors: {}{}",
-                         error_codes[..limit].join(", "),
-                         if error_codes.len() > 9 { "..." } else { "" }
-                        ).expect("failed to give tips...");
-                writeln!(dst,
-                         "If you want more information on an error, try using \
-                          \"rustc --explain {}\"",
-                         &error_codes[0]).expect("failed to give tips...");
-            } else {
-                writeln!(dst,
-                         "If you want more information on this error, try using \
-                          \"rustc --explain {}\"",
-                         &error_codes[0]).expect("failed to give tips...");
-            }
-            dst.flush().expect("failed to emit errors");
-        }
-    }
-}
-
 impl EmitterWriter {
     pub fn stderr(color_config: ColorConfig,
                   code_map: Option<Lrc<CodeMapper>>,
                   short_message: bool,
                   teach: bool)
                   -> EmitterWriter {
-        let dst = Destination::from_stderr(color_config);
-        EmitterWriter {
-            dst,
-            cm: code_map,
-            short_message,
-            teach,
-            error_codes: HashSet::new(),
-            ui_testing: false,
+        if color_config.use_color() {
+            let dst = Destination::from_stderr();
+            EmitterWriter {
+                dst,
+                cm: code_map,
+                short_message,
+                teach,
+                ui_testing: false,
+            }
+        } else {
+            EmitterWriter {
+                dst: Raw(Box::new(io::stderr())),
+                cm: code_map,
+                short_message,
+                teach,
+                ui_testing: false,
+            }
         }
     }
 
@@ -179,7 +169,6 @@ impl EmitterWriter {
             cm: code_map,
             short_message,
             teach,
-            error_codes: HashSet::new(),
             ui_testing: false,
         }
     }
@@ -1020,14 +1009,12 @@ impl EmitterWriter {
             if primary_span != &&DUMMY_SP {
                 (cm.lookup_char_pos(primary_span.lo()), cm)
             } else {
-                emit_to_destination(&buffer.render(), level, &mut self.dst, self.short_message,
-                                    &mut self.error_codes)?;
+                emit_to_destination(&buffer.render(), level, &mut self.dst, self.short_message)?;
                 return Ok(());
             }
         } else {
             // If we don't have span information, emit and exit
-            emit_to_destination(&buffer.render(), level, &mut self.dst, self.short_message,
-                                &mut self.error_codes)?;
+            emit_to_destination(&buffer.render(), level, &mut self.dst, self.short_message)?;
             return Ok(());
         };
         if let Ok(pos) =
@@ -1200,8 +1187,7 @@ impl EmitterWriter {
         }
 
         // final step: take our styled buffer, render it, then output it
-        emit_to_destination(&buffer.render(), level, &mut self.dst, self.short_message,
-                            &mut self.error_codes)?;
+        emit_to_destination(&buffer.render(), level, &mut self.dst, self.short_message)?;
 
         Ok(())
 
@@ -1289,8 +1275,7 @@ impl EmitterWriter {
                 let msg = format!("and {} other candidates", suggestions.len() - MAX_SUGGESTIONS);
                 buffer.puts(row_num, 0, &msg, Style::NoStyle);
             }
-            emit_to_destination(&buffer.render(), level, &mut self.dst, self.short_message,
-                                &mut self.error_codes)?;
+            emit_to_destination(&buffer.render(), level, &mut self.dst, self.short_message)?;
         }
         Ok(())
     }
@@ -1321,7 +1306,7 @@ impl EmitterWriter {
                         draw_col_separator_no_space(&mut buffer, 0, max_line_num_len + 1);
                     }
                     match emit_to_destination(&buffer.render(), level, &mut self.dst,
-                                              self.short_message, &mut self.error_codes) {
+                                              self.short_message) {
                         Ok(()) => (),
                         Err(e) => panic!("failed to emit error: {}", e)
                     }
@@ -1416,8 +1401,7 @@ fn overlaps(a1: &Annotation, a2: &Annotation, padding: usize) -> bool {
 fn emit_to_destination(rendered_buffer: &Vec<Vec<StyledString>>,
                        lvl: &Level,
                        dst: &mut Destination,
-                       short_message: bool,
-                       error_codes: &mut HashSet<String>)
+                       short_message: bool)
                        -> io::Result<()> {
     use lock;
 
@@ -1440,10 +1424,7 @@ fn emit_to_destination(rendered_buffer: &Vec<Vec<StyledString>>,
         for part in line {
             dst.apply_style(lvl.clone(), part.style)?;
             write!(dst, "{}", part.text)?;
-            if !short_message && part.text.len() == 12 && part.text.starts_with("error[E") {
-                error_codes.insert(part.text[6..11].to_owned());
-            }
-            dst.reset()?;
+            dst.reset_attrs()?;
         }
         if !short_message {
             write!(dst, "\n")?;
