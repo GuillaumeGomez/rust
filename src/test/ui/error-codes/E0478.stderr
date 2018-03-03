@@ -17,4 +17,5 @@ LL | struct Prince<'kiss, 'SnowWhite> {
 
 error: aborting due to previous error
 
-If you want more information on this error, try using "rustc --explain E0478"
+error: For more information about this error, try `rustc --explain E0478`.
+

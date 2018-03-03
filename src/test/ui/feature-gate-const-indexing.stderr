@@ -1,0 +1,10 @@
+error[E0080]: constant evaluation error
+  --> $DIR/feature-gate-const-indexing.rs:16:24
+   |
+LL |     const BLUB: [i32; (ARR[0] - 41) as usize] = [5]; //~ ERROR constant evaluation error
+   |                        ^^^^^^ the index operation on const values is unstable
+
+error: aborting due to previous error
+
+error: For more information about this error, try `rustc --explain E0080`.
+
