@@ -19,3 +19,7 @@ path = "../libcore/benches/lib.rs"
 
 [dev-dependencies]
 rand = "0.4"
+
+[dependencies.doc-comment]
+version = "0.1"
+features = ["no_core"]

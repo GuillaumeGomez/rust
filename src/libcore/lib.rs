@@ -208,3 +208,6 @@ pub use coresimd::simd;
 #[unstable(feature = "stdsimd", issue = "48556")]
 #[cfg(not(stage0))]
 pub use coresimd::arch;
+
+#[macro_use]
+extern crate doc_comment;
