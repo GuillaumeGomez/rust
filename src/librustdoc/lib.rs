@@ -93,6 +93,7 @@ mod visit_ast;
 mod visit_lib;
 mod test;
 mod theme;
+mod resolve_additional_crate;
 
 struct Output {
     krate: clean::Crate,

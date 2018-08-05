@@ -48,6 +48,7 @@ use clean;
 use clean::{get_path_for_type, Clean, MAX_DEF_ID, AttributesExt};
 use html::render::RenderInfo;
 use passes;
+use resolve_additional_crate::UnusedExternCrate;
 
 pub use rustc::session::config::{Input, Options, CodegenOptions};
 pub use rustc::session::search_paths::SearchPaths;
@@ -430,17 +431,21 @@ pub fn run_core(search_paths: SearchPaths,
 
         let mut crate_loader = CrateLoader::new(&sess, &cstore, &name);
 
+        {
+            krate.visit_all_item_likes(&UnusedExternCrate::new(&mut crate_loader));
+        }
+
         let resolver_arenas = resolve::Resolver::arenas();
         let result = driver::phase_2_configure_and_expand_inner(&sess,
-                                                        &cstore,
-                                                        krate,
-                                                        None,
-                                                        &name,
-                                                        None,
-                                                        resolve::MakeGlobMap::No,
-                                                        &resolver_arenas,
-                                                        &mut crate_loader,
-                                                        |_| Ok(()));
+                                                                &cstore,
+                                                                krate,
+                                                                None,
+                                                                &name,
+                                                                None,
+                                                                resolve::MakeGlobMap::No,
+                                                                &resolver_arenas,
+                                                                &mut crate_loader,
+                                                                |_| Ok(()));
         let driver::InnerExpansionResult {
             mut hir_forest,
             mut resolver,
@@ -469,23 +474,23 @@ pub fn run_core(search_paths: SearchPaths,
         let arenas = AllArenas::new();
         let hir_map = hir_map::map_crate(&sess, &*cstore, &mut hir_forest, &defs);
         let output_filenames = driver::build_output_filenames(&input,
-                                                            &None,
-                                                            &None,
-                                                            &[],
-                                                            &sess);
+                                                              &None,
+                                                              &None,
+                                                              &[],
+                                                              &sess);
 
         let resolver = RefCell::new(resolver);
         abort_on_err(driver::phase_3_run_analysis_passes(&*codegen_backend,
-                                                        control,
-                                                        &sess,
-                                                        &*cstore,
-                                                        hir_map,
-                                                        analysis,
-                                                        resolutions,
-                                                        &arenas,
-                                                        &name,
-                                                        &output_filenames,
-                                                        |tcx, analysis, _, result| {
+                                                         control,
+                                                         &sess,
+                                                         &*cstore,
+                                                         hir_map,
+                                                         analysis,
+                                                         resolutions,
+                                                         &arenas,
+                                                         &name,
+                                                         &output_filenames,
+                                                         |tcx, analysis, _, result| {
             if let Err(_) = result {
                 sess.fatal("Compilation failed, aborting rustdoc");
             }
