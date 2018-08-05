@@ -1542,6 +1542,10 @@ impl<'a, 'cl> hir::lowering::Resolver for Resolver<'a, 'cl> {
 }
 
 impl<'a, 'crateloader> Resolver<'a, 'crateloader> {
+    pub fn crate_loader(&self) -> &'a mut CrateLoader<'crateloader> {
+        self.crate_loader
+    }
+
     /// Rustdoc uses this to resolve things in a recoverable way. ResolutionError<'a>
     /// isn't something that can be returned because it can't be made to live that long,
     /// and also it's a private type. Fortunately rustdoc doesn't need to know the error,

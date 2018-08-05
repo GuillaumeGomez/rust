@@ -431,10 +431,6 @@ pub fn run_core(search_paths: SearchPaths,
 
         let mut crate_loader = CrateLoader::new(&sess, &cstore, &name);
 
-        {
-            krate.visit_all_item_likes(&UnusedExternCrate::new(&mut crate_loader));
-        }
-
         let resolver_arenas = resolve::Resolver::arenas();
         let result = driver::phase_2_configure_and_expand_inner(&sess,
                                                                 &cstore,
@@ -451,6 +447,11 @@ pub fn run_core(search_paths: SearchPaths,
             mut resolver,
             ..
         } = abort_on_err(result, &sess);
+
+        {
+            let mut uec = UnusedExternCrate::new(resolver.crate_loader);
+            hir_forest.krate.visit_all_item_likes(&uec);
+        }
 
         resolver.ignore_extern_prelude_feature = true;
 
