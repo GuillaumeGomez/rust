@@ -1542,8 +1542,9 @@ impl<'a, 'cl> hir::lowering::Resolver for Resolver<'a, 'cl> {
 }
 
 impl<'a, 'crateloader> Resolver<'a, 'crateloader> {
-    pub fn crate_loader(&self) -> &'a mut CrateLoader<'crateloader> {
-        self.crate_loader
+    pub fn with_crate_loader<F>(&mut self, f: F)
+    where F: Fn(&mut CrateLoader<'crateloader>) {
+        f(self.crate_loader)
     }
 
     /// Rustdoc uses this to resolve things in a recoverable way. ResolutionError<'a>

@@ -260,16 +260,18 @@ impl<'a> CrateLoader<'a> {
         (cnum, cmeta)
     }
 
-    fn resolve_crate(&mut self,
-                     root: &Option<CratePaths>,
-                     ident: Symbol,
-                     name: Symbol,
-                     hash: Option<&Svh>,
-                     extra_filename: Option<&str>,
-                     span: Span,
-                     path_kind: PathKind,
-                     mut dep_kind: DepKind)
-                     -> (CrateNum, Lrc<cstore::CrateMetadata>) {
+    fn resolve_crate_no_fail<F>(&mut self,
+                                root: &Option<CratePaths>,
+                                ident: Symbol,
+                                name: Symbol,
+                                hash: Option<&Svh>,
+                                extra_filename: Option<&str>,
+                                span: Span,
+                                path_kind: PathKind,
+                                mut dep_kind: DepKind,
+                                err_callback: F,
+    ) -> Option<(CrateNum, Lrc<cstore::CrateMetadata>)>
+    where F: FnOnce(&mut locator::Context) {
         info!("resolving crate `extern crate {} as {}`", name, ident);
         let result = if let Some(cnum) = self.existing_match(name, hash, path_kind) {
             LoadResult::Previous(cnum)
@@ -296,7 +298,7 @@ impl<'a> CrateLoader<'a> {
                 metadata_loader: &*self.cstore.metadata_loader,
             };
 
-            self.load(&mut locate_ctxt).or_else(|| {
+            match self.load(&mut locate_ctxt).or_else(|| {
                 dep_kind = DepKind::UnexportedMacrosOnly;
 
                 let mut proc_macro_locator = locator::Context {
@@ -313,10 +315,16 @@ impl<'a> CrateLoader<'a> {
                 };
 
                 self.load(&mut proc_macro_locator)
-            }).unwrap_or_else(|| locate_ctxt.report_errs())
+            }) {
+                Some(x) => x,
+                None => {
+                    err_callback(&mut locate_ctxt);
+                    return None;
+                }
+            }
         };
 
-        match result {
+        Some(match result {
             LoadResult::Previous(cnum) => {
                 let data = self.cstore.get_crate_data(cnum);
                 if data.root.macro_derive_registrar.is_some() {
@@ -330,7 +338,22 @@ impl<'a> CrateLoader<'a> {
             LoadResult::Loaded(library) => {
                 self.register_crate(root, ident, span, library, dep_kind)
             }
-        }
+        })
+    }
+
+    fn resolve_crate(&mut self,
+                     root: &Option<CratePaths>,
+                     ident: Symbol,
+                     name: Symbol,
+                     hash: Option<&Svh>,
+                     extra_filename: Option<&str>,
+                     span: Span,
+                     path_kind: PathKind,
+                     dep_kind: DepKind)
+                     -> (CrateNum, Lrc<cstore::CrateMetadata>) {
+        self.resolve_crate_no_fail(root, ident, name, hash, extra_filename, span, path_kind,
+                                   dep_kind, |lc: &mut locator::Context| lc.report_errs())
+            .expect("No error called but still None?!")
     }
 
     fn load(&mut self, locate_ctxt: &mut locator::Context) -> Option<LoadResult> {
@@ -1113,6 +1136,33 @@ impl<'a> CrateLoader<'a> {
                 cnum
             }
             _ => bug!(),
+        }
+    }
+
+    pub fn process_path_extern_no_fail(
+        &mut self,
+        name: Symbol,
+        span: Span,
+    ) -> Option<CrateNum> {
+        match self.resolve_crate_no_fail(
+            &None, name, name, None, None, span, PathKind::Crate, DepKind::Explicit, |_| {},
+        ) {
+            Some((cnum, _)) => {
+                self.update_extern_crate(
+                    cnum,
+                    ExternCrate {
+                        src: ExternCrateSource::Path,
+                        span,
+                        // to have the least priority in `update_extern_crate`
+                        path_len: usize::max_value(),
+                        direct: true,
+                    },
+                    &mut FxHashSet(),
+                );
+
+                Some(cnum)
+            }
+            None => None
         }
     }
 

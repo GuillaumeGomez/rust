@@ -15,51 +15,56 @@ use syntax::ast::Attribute;
 use syntax::symbol::Symbol;
 use syntax_pos::DUMMY_SP;
 
-use clean::AttributesExt;
-
 use html::markdown::markdown_links;
 
-pub struct UnusedExternCrate<'a> {
-    crate_loader: &'a mut CrateLoader<'a>,
+pub struct UnusedExternCrate<'a, 'b: 'a> {
+    crate_loader: &'a mut CrateLoader<'b>,
 }
 
-impl<'a> UnusedExternCrate<'a> {
-    pub fn new(crate_loader: &'a mut CrateLoader<'a>) -> UnusedExternCrate<'a> {
+impl<'a, 'b> UnusedExternCrate<'a, 'b> {
+    pub fn new(crate_loader: &'a mut CrateLoader<'b>) -> UnusedExternCrate<'a, 'b> {
         UnusedExternCrate {
             crate_loader,
         }
     }
 
-    fn check_for_links(&self, attrs: &[Attribute]) {
-        for attr in attrs.lists("doc") {
+    fn check_for_links(&mut self, attrs: &[Attribute]) {
+        for attr in attrs.iter() {
+            if !attr.is_sugared_doc {
+                continue
+            }
+            println!("====> {:?}", attr.value_str());
             if let Some(v) = attr.value_str() {
                 for (ori_link, _) in markdown_links(&v.to_string()) {
                     // bail early for real links
                     if ori_link.contains('/') {
                         continue;
                     }
-                    let link = ori_link.replace("`", "")
-                                       .split('@')
-                                       .last()
-                                       .expect("link split failed")
-                                       .split("::")
-                                       .filter(|s| !s.trim().is_empty())
-                                       .last()
-                                       .expect("second link split failed");
+                    let link = ori_link.replace("`", "");
+                    println!("before: {:?}", ori_link);
+                    let link = link.split('@')
+                                   .last()
+                                   .unwrap_or_else(|| "")
+                                   .split("::")
+                                   .filter(|s| !s.trim().is_empty())
+                                   .next()
+                                   .unwrap_or_else(|| "");
+                    println!("after: {:?}", link);
 
-                    if link.contains(|ch: char| !(ch.is_alphanumeric() ||
+                    if link.is_empty() ||
+                       link.contains(|ch: char| !(ch.is_alphanumeric() ||
                                                   ch == ':' || ch == '_')) {
                         continue;
                     }
 
-                    self.crate_loader.process_path_extern(Symbol::intern(&link), DUMMY_SP);
+                    self.crate_loader.process_path_extern_no_fail(Symbol::intern(&link), DUMMY_SP);
                 }
             }
         }
     }
 }
 
-impl<'hir, 'a> ItemLikeVisitor<'hir> for UnusedExternCrate<'a> {
+impl<'hir, 'a, 'b> ItemLikeVisitor<'hir> for UnusedExternCrate<'a, 'b> {
     fn visit_item(&mut self, item: &'hir Item) {
         self.check_for_links(&item.attrs);
     }

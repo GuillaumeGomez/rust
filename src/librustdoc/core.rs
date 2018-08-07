@@ -449,8 +449,10 @@ pub fn run_core(search_paths: SearchPaths,
         } = abort_on_err(result, &sess);
 
         {
-            let mut uec = UnusedExternCrate::new(resolver.crate_loader);
-            hir_forest.krate.visit_all_item_likes(&uec);
+            resolver.with_crate_loader(|crate_loader| {
+                let mut uec = UnusedExternCrate::new(crate_loader);
+                hir_forest.krate().visit_all_item_likes(&mut uec);
+            });
         }
 
         resolver.ignore_extern_prelude_feature = true;
