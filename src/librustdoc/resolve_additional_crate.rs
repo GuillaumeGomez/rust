@@ -33,7 +33,7 @@ impl<'a, 'b> UnusedExternCrate<'a, 'b> {
             if !attr.is_sugared_doc {
                 continue
             }
-            println!("====> {:?}", attr.value_str());
+            //println!("====> {:?}", attr.value_str());
             if let Some(v) = attr.value_str() {
                 for (ori_link, _) in markdown_links(&v.to_string()) {
                     // bail early for real links
@@ -41,7 +41,7 @@ impl<'a, 'b> UnusedExternCrate<'a, 'b> {
                         continue;
                     }
                     let link = ori_link.replace("`", "");
-                    println!("before: {:?}", ori_link);
+                    //println!("before: {:?}", ori_link);
                     let link = link.split('@')
                                    .last()
                                    .unwrap_or_else(|| "")
@@ -49,11 +49,12 @@ impl<'a, 'b> UnusedExternCrate<'a, 'b> {
                                    .filter(|s| !s.trim().is_empty())
                                    .next()
                                    .unwrap_or_else(|| "");
-                    println!("after: {:?}", link);
+                    //println!("after: {:?}", link);
 
                     if link.is_empty() ||
+                       link == "core" ||
                        link.contains(|ch: char| !(ch.is_alphanumeric() ||
-                                                  ch == ':' || ch == '_')) {
+                                                  ch == ':' || ch == '_' || ch == '-')) {
                         continue;
                     }
 

@@ -448,7 +448,8 @@ pub fn run_core(search_paths: SearchPaths,
             ..
         } = abort_on_err(result, &sess);
 
-        {
+        println!("==> {:?}", name);
+        if name != "core" && name != "alloc" && name != "std" {
             resolver.with_crate_loader(|crate_loader| {
                 let mut uec = UnusedExternCrate::new(crate_loader);
                 hir_forest.krate().visit_all_item_likes(&mut uec);
