@@ -3453,12 +3453,17 @@ impl<'a, 'crateloader: 'a> Resolver<'a, 'crateloader> {
                        self.session.features_untracked().extern_absolute_paths &&
                        self.session.rust_2018() {
                         // `::extern_crate::a::b`
-                        let crate_id = self.crate_loader.process_path_extern(name, ident.span);
-                        let crate_root =
-                            self.get_module(DefId { krate: crate_id, index: CRATE_DEF_INDEX });
-                        self.populate_module_if_necessary(crate_root);
-                        module = Some(crate_root);
-                        continue
+                        match self.crate_loader.process_path_extern_no_fail(name, ident.span) {
+                            Some(crate_id) => {
+                                let crate_root =
+                                    self.get_module(DefId { krate: crate_id,
+                                                            index: CRATE_DEF_INDEX });
+                                self.populate_module_if_necessary(crate_root);
+                                module = Some(crate_root);
+                                continue
+                            }
+                            None => {}
+                        }
                     }
                 }
             }

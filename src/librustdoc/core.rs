@@ -48,7 +48,6 @@ use clean;
 use clean::{get_path_for_type, Clean, MAX_DEF_ID, AttributesExt};
 use html::render::RenderInfo;
 use passes;
-use resolve_additional_crate::UnusedExternCrate;
 
 pub use rustc::session::config::{Input, Options, CodegenOptions};
 pub use rustc::session::search_paths::SearchPaths;
@@ -447,14 +446,6 @@ pub fn run_core(search_paths: SearchPaths,
             mut resolver,
             ..
         } = abort_on_err(result, &sess);
-
-        println!("==> {:?}", name);
-        if name != "core" && name != "alloc" && name != "std" {
-            resolver.with_crate_loader(|crate_loader| {
-                let mut uec = UnusedExternCrate::new(crate_loader);
-                hir_forest.krate().visit_all_item_likes(&mut uec);
-            });
-        }
 
         resolver.ignore_extern_prelude_feature = true;
 

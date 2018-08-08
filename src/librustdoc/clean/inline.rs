@@ -18,7 +18,7 @@ use syntax_pos::{DUMMY_SP, Span};
 
 use rustc::hir;
 use rustc::hir::def::{Def, CtorKind};
-use rustc::hir::def_id::{DefId, LOCAL_CRATE};
+use rustc::hir::def_id::{DefId/*, LOCAL_CRATE*/};
 use rustc_metadata::cstore::LoadedMacro;
 use rustc::ty;
 use rustc::util::nodemap::FxHashSet;
@@ -163,7 +163,7 @@ pub fn record_extern_fqn(cx: &DocContext, did: DefId, kind: clean::TypeKind) {
         return;
     }
 
-    if cx.tcx.all_crate_nums(LOCAL_CRATE)
+    if cx.tcx.crates()
              .iter()
              .find(|&&c| c == did.krate)
              .is_none() {
