@@ -14,11 +14,11 @@ use std::iter::once;
 
 use syntax::ast;
 use syntax::ext::base::MacroKind;
-use syntax_pos::Span;
+use syntax_pos::{DUMMY_SP, Span};
 
 use rustc::hir;
 use rustc::hir::def::{Def, CtorKind};
-use rustc::hir::def_id::DefId;
+use rustc::hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_metadata::cstore::LoadedMacro;
 use rustc::ty;
 use rustc::util::nodemap::FxHashSet;
@@ -163,6 +163,16 @@ pub fn record_extern_fqn(cx: &DocContext, did: DefId, kind: clean::TypeKind) {
         return;
     }
 
+    if cx.tcx.all_crate_nums(LOCAL_CRATE)
+             .iter()
+             .find(|&&c| c == did.krate)
+             .is_none() {
+        cx.sess()
+          .struct_span_warn(DUMMY_SP,
+                            &format!("Please import \"{}\" if you want to link to it", "lol"))
+          .emit();
+        return;
+    }
     let crate_name = cx.tcx.crate_name(did.krate).to_string();
     let relative = cx.tcx.def_path(did).data.into_iter().filter_map(|elem| {
         // extern blocks have an empty name
