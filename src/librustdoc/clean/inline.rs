@@ -14,7 +14,7 @@ use std::iter::once;
 
 use syntax::ast;
 use syntax::ext::base::MacroKind;
-use syntax_pos::{DUMMY_SP, Span};
+use syntax_pos::{/*DUMMY_SP, */Span};
 
 use rustc::hir;
 use rustc::hir::def::{Def, CtorKind};
@@ -167,11 +167,12 @@ pub fn record_extern_fqn(cx: &DocContext, did: DefId, kind: clean::TypeKind) {
              .iter()
              .find(|&&c| c == did.krate)
              .is_none() {
-        cx.sess()
+        /*cx.sess()
           .struct_span_warn(DUMMY_SP,
                             &format!("Please import \"{}\" if you want to link to it", "lol"))
-          .emit();
-        return;
+          .emit();*/
+        panic!("fuck you");
+        //return;
     }
     let crate_name = cx.tcx.crate_name(did.krate).to_string();
     let relative = cx.tcx.def_path(did).data.into_iter().filter_map(|elem| {
