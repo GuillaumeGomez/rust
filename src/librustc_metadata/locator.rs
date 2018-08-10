@@ -523,10 +523,37 @@ impl<'a> Context<'a> {
         // search is being performed for.
         let mut libraries = FxHashMap();
         for (_hash, (rlibs, rmetas, dylibs)) in candidates {
-            let mut slot = None;
-            let rlib = self.extract_one(rlibs, CrateFlavor::Rlib, &mut slot);
-            let rmeta = self.extract_one(rmetas, CrateFlavor::Rmeta, &mut slot);
-            let dylib = self.extract_one(dylibs, CrateFlavor::Dylib, &mut slot);
+            use std::thread;
+            use std::mem::transmute;
+            let mut slot: Option<(Svh, MetadataBlob)> = None;
+
+            // FIXME: too bored to write rust code so here the quick and ugly version...
+            let t_slot = &mut slot as *mut _ as usize;
+            let this = self as *mut _ as usize;
+            let rlib = match thread::spawn(move || {
+                let slot: &mut Option<(Svh, MetadataBlob)> = unsafe { transmute(t_slot) };
+                let this: &mut Self = unsafe { transmute(this) };
+                this.extract_one(rlibs, CrateFlavor::Rlib, slot)
+            }).join() {
+                Ok(x) => x,
+                _ => return None,
+            };
+            let rmeta = match thread::spawn(move || {
+                let slot: &mut Option<(Svh, MetadataBlob)> = unsafe { transmute(t_slot) };
+                let this: &mut Self = unsafe { transmute(this) };
+                this.extract_one(rmetas, CrateFlavor::Rmeta, slot)
+            }).join() {
+                Ok(x) => x,
+                _ => return None,
+            };
+            let dylib = match thread::spawn(move || {
+                let slot: &mut Option<(Svh, MetadataBlob)> = unsafe { transmute(t_slot) };
+                let this: &mut Self = unsafe { transmute(this) };
+                this.extract_one(dylibs, CrateFlavor::Dylib, slot)
+            }).join() {
+                Ok(x) => x,
+                _ => return None,
+            };
             if let Some((h, m)) = slot {
                 libraries.insert(h,
                                  Library {
