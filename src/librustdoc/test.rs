@@ -91,6 +91,7 @@ pub fn run(mut options: Options) -> isize {
                     FatalError.raise();
                 }
             };
+        eprintln!("=> {:?}", sess.host);
         let driver::ExpansionResult { defs, mut hir_forest, .. } = {
             phase_2_configure_and_expand(
                 &sess,

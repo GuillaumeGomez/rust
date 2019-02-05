@@ -38,6 +38,7 @@ pub struct Module {
     pub foreigns: Vec<hir::ForeignMod>,
     pub macros: Vec<Macro>,
     pub proc_macros: Vec<ProcMacro>,
+    pub trait_aliases: Vec<TraitAlias>,
     pub is_crate: bool,
 }
 
@@ -198,6 +199,18 @@ pub struct Trait {
     pub unsafety: hir::Unsafety,
     pub name: Name,
     pub items: hir::HirVec<hir::TraitItem>,
+    pub generics: hir::Generics,
+    pub bounds: hir::HirVec<hir::GenericBound>,
+    pub attrs: hir::HirVec<ast::Attribute>,
+    pub id: ast::NodeId,
+    pub whence: Span,
+    pub vis: hir::Visibility,
+    pub stab: Option<attr::Stability>,
+    pub depr: Option<attr::Deprecation>,
+}
+
+pub struct TraitAlias {
+    pub name: Name,
     pub generics: hir::Generics,
     pub bounds: hir::HirVec<hir::GenericBound>,
     pub attrs: hir::HirVec<ast::Attribute>,

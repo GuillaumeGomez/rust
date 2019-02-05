@@ -1822,6 +1822,7 @@ struct AllTypes {
     keywords: FxHashSet<ItemEntry>,
     attributes: FxHashSet<ItemEntry>,
     derives: FxHashSet<ItemEntry>,
+    trait_aliases: FxHashSet<ItemEntry>,
 }
 
 impl AllTypes {
@@ -1842,6 +1843,7 @@ impl AllTypes {
             keywords: new_set(100),
             attributes: new_set(100),
             derives: new_set(100),
+            trait_aliases: new_set(100),
         }
     }
 
@@ -1865,6 +1867,7 @@ impl AllTypes {
                 ItemType::Constant => self.constants.insert(ItemEntry::new(new_url, name)),
                 ItemType::ProcAttribute => self.attributes.insert(ItemEntry::new(new_url, name)),
                 ItemType::ProcDerive => self.derives.insert(ItemEntry::new(new_url, name)),
+                ItemType::TraitAlias => self.trait_aliases.insert(ItemEntry::new(new_url, name)),
                 _ => true,
             };
         }
@@ -1908,6 +1911,7 @@ impl fmt::Display for AllTypes {
         print_entries(f, &self.derives, "Derive Macros", "derives")?;
         print_entries(f, &self.functions, "Functions", "functions")?;
         print_entries(f, &self.typedefs, "Typedefs", "typedefs")?;
+        print_entries(f, &self.trait_aliases, "Trait Aliases", "trait-alias")?;
         print_entries(f, &self.existentials, "Existentials", "existentials")?;
         print_entries(f, &self.statics, "Statics", "statics")?;
         print_entries(f, &self.constants, "Constants", "constants")
@@ -2444,6 +2448,7 @@ impl<'a> fmt::Display for Item<'a> {
             clean::ForeignTypeItem => item_foreign_type(fmt, self.cx, self.item),
             clean::KeywordItem(ref k) => item_keyword(fmt, self.cx, self.item, k),
             clean::ExistentialItem(ref e, _) => item_existential(fmt, self.cx, self.item, e),
+            clean::TraitAliasItem(ref ta) => item_trait_alias(fmt, self.cx, self.item, ta),
             _ => {
                 // We don't generate pages for any other type.
                 unreachable!();
@@ -4271,6 +4276,25 @@ fn item_existential(
            t.generics,
            where_clause = WhereClause { gens: &t.generics, indent: 0, end_newline: true },
            bounds = bounds(&t.bounds))?;
+
+    document(w, cx, it)?;
+
+    // Render any items associated directly to this alias, as otherwise they
+    // won't be visible anywhere in the docs. It would be nice to also show
+    // associated items from the aliased type (see discussion in #32077), but
+    // we need #14072 to make sense of the generics.
+    render_assoc_items(w, cx, it, it.def_id, AssocItemRender::All)
+}
+
+fn item_trait_alias(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
+                    t: &clean::TraitAlias) -> fmt::Result {
+    write!(w, "<pre class='rust trait-alias'>")?;
+    render_attributes(w, it)?;
+    write!(w, "trait {}{}{where_clause} = {type_};</pre>",
+           it.name.as_ref().unwrap(),
+           t.generics,
+           where_clause = WhereClause { gens: &t.generics, indent: 0, end_newline: true },
+           type_ = t.type_)?;
 
     document(w, cx, it)?;
 

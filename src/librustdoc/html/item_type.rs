@@ -42,6 +42,7 @@ pub enum ItemType {
     Existential     = 22,
     ProcAttribute   = 23,
     ProcDerive      = 24,
+    TraitAlias      = 25,
 }
 
 
