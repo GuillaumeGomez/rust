@@ -983,6 +983,9 @@ impl fmt::Display for clean::Import {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             clean::Import::Simple(ref name, ref src) => {
+                if ::std::env::var("LOL").is_ok() {
+                    println!("--> {:?} {:?}", name, src.path.last_name());
+                }
                 if *name == src.path.last_name() {
                     write!(f, "use {};", *src)
                 } else {
@@ -1002,6 +1005,9 @@ impl fmt::Display for clean::Import {
 
 impl fmt::Display for clean::ImportSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if ::std::env::var("LOL").is_ok() {
+            println!("--> {:?}", self.path.last_name());
+        }
         match self.did {
             Some(did) => resolved_path(f, did, &self.path, true, false),
             _ => {

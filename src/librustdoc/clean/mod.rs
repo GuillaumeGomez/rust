@@ -3954,6 +3954,9 @@ impl Clean<Vec<Item>> for doctree::Import {
         // crate in Rust 2018+
         let please_inline = self.attrs.lists(sym::doc).has_word(sym::inline);
         let path = self.path.clean(cx);
+        if ::std::env::var("LOL").is_ok() {
+            println!("=> {:?} {:?}", self.glob, denied);
+        }
         let inner = if self.glob {
             if !denied {
                 let mut visited = FxHashSet::default();
@@ -3977,13 +3980,22 @@ impl Clean<Vec<Item>> for doctree::Import {
                     _ => {}
                 }
             }
+            if ::std::env::var("LOL").is_ok() {
+                println!("-> {:?} {:?}", name, denied);
+            }
             if !denied {
                 let mut visited = FxHashSet::default();
                 if let Some(items) = inline::try_inline(cx, path.res, name, &mut visited) {
                     return items;
                 }
             }
-            Import::Simple(name.clean(cx), resolve_use_source(cx, path))
+            let x = Import::Simple(name.clean(cx), resolve_use_source(cx, path));
+            if ::std::env::var("LOL").is_ok() {
+                if let Import::Simple(ref name, ref src) = x {
+                    println!("{:?} {:?}", name, src.path.last_name());
+                }
+            }
+            x
         };
 
         vec![Item {

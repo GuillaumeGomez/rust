@@ -2753,6 +2753,11 @@ fn item_module(w: &mut fmt::Formatter<'_>, cx: &Context,
                                   0
                               }));
 
+    if ::std::env::var("LOL").is_ok() {
+        for i in items.iter() {
+            println!("|||> {:?} {:?} {:?}\n", i.name, i.type_(), i);
+        }
+    }
     debug!("{:?}", indices);
     let mut curty = None;
     for &idx in &indices {

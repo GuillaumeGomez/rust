@@ -381,6 +381,9 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
 
     pub fn visit_item(&mut self, item: &hir::Item,
                       renamed: Option<ast::Ident>, om: &mut Module) {
+        if ::std::env::var("LOL").is_ok() {
+            println!("{:?} {:?}", renamed, item.node);
+        }
         debug!("Visiting item {:?}", item);
         let ident = renamed.unwrap_or(item.ident);
 

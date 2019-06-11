@@ -40,6 +40,7 @@ pub struct Module {
     pub proc_macros: Vec<ProcMacro>,
     pub trait_aliases: Vec<TraitAlias>,
     pub is_crate: bool,
+    pub renamed_name: Option<Name>,
 }
 
 impl Module {
@@ -71,6 +72,7 @@ impl Module {
             proc_macros:   Vec::new(),
             trait_aliases: Vec::new(),
             is_crate   : false,
+            renamed_name: None,
         }
     }
 }
@@ -96,6 +98,7 @@ pub struct Struct {
     pub attrs: hir::HirVec<ast::Attribute>,
     pub fields: hir::HirVec<hir::StructField>,
     pub whence: Span,
+    pub renamed_name: Option<Name>,
 }
 
 pub struct Union {
@@ -109,6 +112,7 @@ pub struct Union {
     pub attrs: hir::HirVec<ast::Attribute>,
     pub fields: hir::HirVec<hir::StructField>,
     pub whence: Span,
+    pub renamed_name: Option<Name>,
 }
 
 pub struct Enum {
@@ -121,6 +125,7 @@ pub struct Enum {
     pub id: hir::HirId,
     pub whence: Span,
     pub name: Name,
+    pub renamed_name: Option<Name>,
 }
 
 pub struct Variant {
@@ -145,6 +150,7 @@ pub struct Function {
     pub whence: Span,
     pub generics: hir::Generics,
     pub body: hir::BodyId,
+    pub renamed_name: Option<Name>,
 }
 
 pub struct Typedef {
@@ -157,6 +163,7 @@ pub struct Typedef {
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
     pub depr: Option<attr::Deprecation>,
+    pub renamed_name: Option<Name>,
 }
 
 pub struct Existential {
@@ -168,6 +175,7 @@ pub struct Existential {
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
     pub depr: Option<attr::Deprecation>,
+    pub renamed_name: Option<Name>,
 }
 
 #[derive(Debug)]
@@ -182,6 +190,7 @@ pub struct Static {
     pub depr: Option<attr::Deprecation>,
     pub id: hir::HirId,
     pub whence: Span,
+    pub renamed_name: Option<Name>,
 }
 
 pub struct Constant {
@@ -194,6 +203,7 @@ pub struct Constant {
     pub depr: Option<attr::Deprecation>,
     pub id: hir::HirId,
     pub whence: Span,
+    pub renamed_name: Option<Name>,
 }
 
 pub struct Trait {
@@ -209,6 +219,7 @@ pub struct Trait {
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
     pub depr: Option<attr::Deprecation>,
+    pub renamed_name: Option<Name>,
 }
 
 pub struct TraitAlias {
@@ -221,6 +232,7 @@ pub struct TraitAlias {
     pub vis: hir::Visibility,
     pub stab: Option<attr::Stability>,
     pub depr: Option<attr::Deprecation>,
+    pub renamed_name: Option<Name>,
 }
 
 #[derive(Debug)]
