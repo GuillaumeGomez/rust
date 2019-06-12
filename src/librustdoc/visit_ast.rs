@@ -98,7 +98,8 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
 
     pub fn visit_variant_data(&mut self, item: &hir::Item,
                               name: ast::Name, sd: &hir::VariantData,
-                              generics: &hir::Generics) -> Struct {
+                              generics: &hir::Generics,
+                              original_name: Option<ast::Name>) -> Struct {
         debug!("Visiting struct");
         let struct_type = struct_type_from_def(&*sd);
         Struct {
@@ -111,13 +112,15 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
             attrs: item.attrs.clone(),
             generics: generics.clone(),
             fields: sd.fields().iter().cloned().collect(),
-            whence: item.span
+            whence: item.span,
+            original_name,
         }
     }
 
     pub fn visit_union_data(&mut self, item: &hir::Item,
                             name: ast::Name, sd: &hir::VariantData,
-                            generics: &hir::Generics) -> Union {
+                            generics: &hir::Generics,
+                            original_name: Option<ast::Name>) -> Union {
         debug!("Visiting union");
         let struct_type = struct_type_from_def(&*sd);
         Union {
@@ -130,13 +133,15 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
             attrs: item.attrs.clone(),
             generics: generics.clone(),
             fields: sd.fields().iter().cloned().collect(),
-            whence: item.span
+            whence: item.span,
+            original_name,
         }
     }
 
     pub fn visit_enum_def(&mut self, it: &hir::Item,
                           name: ast::Name, def: &hir::EnumDef,
-                          params: &hir::Generics) -> Enum {
+                          params: &hir::Generics,
+                          original_name: Option<ast::Name>) -> Enum {
         debug!("Visiting enum");
         Enum {
             name,
@@ -156,6 +161,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
             attrs: it.attrs.clone(),
             id: it.hir_id,
             whence: it.span,
+            original_name,
         }
     }
 
@@ -163,7 +169,8 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     name: ast::Name, fd: &hir::FnDecl,
                     header: hir::FnHeader,
                     gen: &hir::Generics,
-                    body: hir::BodyId) {
+                    body: hir::BodyId,
+                    original_name: Option<ast::Name>) {
         debug!("Visiting fn");
         let macro_kind = item.attrs.iter().filter_map(|a| {
             if a.check_name(sym::proc_macro) {
@@ -212,6 +219,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     whence: item.span,
                     stab: self.stability(item.hir_id),
                     depr: self.deprecation(item.hir_id),
+                    original_name,
                 });
             }
             None => {
@@ -227,6 +235,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     generics: gen.clone(),
                     header,
                     body,
+                    original_name,
                 });
             }
         }
@@ -329,7 +338,8 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
         }
 
         let res_hir_id = match tcx.hir().as_local_hir_id(res_did) {
-            Some(n) => n, None => return false
+            Some(n) => n,
+            None => return false,
         };
 
         let is_private = !self.cx.renderinfo.borrow().access_levels.is_public(res_did);
@@ -381,10 +391,8 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
 
     pub fn visit_item(&mut self, item: &hir::Item,
                       renamed: Option<ast::Ident>, om: &mut Module) {
-        if ::std::env::var("LOL").is_ok() {
-            println!("{:?} {:?}", renamed, item.node);
-        }
         debug!("Visiting item {:?}", item);
+        let original_name = renamed.map(|_| item.ident.name.clone());
         let ident = renamed.unwrap_or(item.ident);
 
         if item.vis.node.is_pub() {
@@ -473,13 +481,13 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                                                      Some(ident.name)));
             },
             hir::ItemKind::Enum(ref ed, ref gen) =>
-                om.enums.push(self.visit_enum_def(item, ident.name, ed, gen)),
+                om.enums.push(self.visit_enum_def(item, ident.name, ed, gen, original_name)),
             hir::ItemKind::Struct(ref sd, ref gen) =>
-                om.structs.push(self.visit_variant_data(item, ident.name, sd, gen)),
+                om.structs.push(self.visit_variant_data(item, ident.name, sd, gen, original_name)),
             hir::ItemKind::Union(ref sd, ref gen) =>
-                om.unions.push(self.visit_union_data(item, ident.name, sd, gen)),
+                om.unions.push(self.visit_union_data(item, ident.name, sd, gen, original_name)),
             hir::ItemKind::Fn(ref fd, header, ref gen, body) =>
-                self.visit_fn(om, item, ident.name, &**fd, header, gen, body),
+                self.visit_fn(om, item, ident.name, &**fd, header, gen, body, original_name),
             hir::ItemKind::Ty(ref ty, ref gen) => {
                 let t = Typedef {
                     ty: ty.clone(),
@@ -491,6 +499,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     vis: item.vis.clone(),
                     stab: self.stability(item.hir_id),
                     depr: self.deprecation(item.hir_id),
+                    original_name,
                 };
                 om.typedefs.push(t);
             },
@@ -504,6 +513,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     vis: item.vis.clone(),
                     stab: self.stability(item.hir_id),
                     depr: self.deprecation(item.hir_id),
+                    original_name,
                 };
                 om.existentials.push(t);
             },
@@ -519,6 +529,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     vis: item.vis.clone(),
                     stab: self.stability(item.hir_id),
                     depr: self.deprecation(item.hir_id),
+                    original_name,
                 };
                 om.statics.push(s);
             },
@@ -533,6 +544,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     vis: item.vis.clone(),
                     stab: self.stability(item.hir_id),
                     depr: self.deprecation(item.hir_id),
+                    original_name,
                 };
                 om.constants.push(s);
             },
@@ -553,6 +565,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     vis: item.vis.clone(),
                     stab: self.stability(item.hir_id),
                     depr: self.deprecation(item.hir_id),
+                    original_name,
                 };
                 om.traits.push(t);
             },
@@ -567,6 +580,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     vis: item.vis.clone(),
                     stab: self.stability(item.hir_id),
                     depr: self.deprecation(item.hir_id),
+                    original_name,
                 };
                 om.trait_aliases.push(t);
             },
@@ -617,7 +631,6 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
         let matchers = tts.chunks(4).map(|arm| arm[0].span()).collect();
 
         Macro {
-
             def_id: self.cx.tcx.hir().local_def_id_from_hir_id(def.hir_id),
             attrs: def.attrs.clone(),
             name: renamed.unwrap_or(def.name),
@@ -626,6 +639,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
             stab: self.stability(def.hir_id),
             depr: self.deprecation(def.hir_id),
             imported_from: None,
+            original_name: None,
         }
     }
 }

@@ -122,6 +122,7 @@ impl<'a, 'tcx> BlanketImplFinder<'a, 'tcx> {
                         synthetic: false,
                         blanket_impl: Some(trait_ref.self_ty().clean(self.cx)),
                     }),
+                    original_name: None,
                 });
             });
         }

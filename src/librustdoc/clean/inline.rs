@@ -123,6 +123,7 @@ pub fn try_inline(
         stability: cx.tcx.lookup_stability(did).clean(cx),
         deprecation: cx.tcx.lookup_deprecation(did).clean(cx),
         def_id: did,
+        original_name: None,
     });
     Some(ret)
 }
@@ -392,6 +393,7 @@ pub fn build_impl(cx: &DocContext<'_>, did: DefId, ret: &mut Vec<clean::Item>) {
         stability: tcx.lookup_stability(did).clean(cx),
         deprecation: tcx.lookup_deprecation(did).clean(cx),
         def_id: did,
+        original_name: None,
     });
 }
 

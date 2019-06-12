@@ -194,6 +194,7 @@ impl<'a, 'tcx> Clean<Crate> for visit_ast::RustdocVisitor<'a, 'tcx> {
                     deprecation: get_deprecation(cx, def_id),
                     def_id,
                     inner: PrimitiveItem(prim),
+                    original_name: None,
                 }
             }));
             m.items.extend(keywords.into_iter().map(|(def_id, kw, attrs)| {
@@ -206,6 +207,7 @@ impl<'a, 'tcx> Clean<Crate> for visit_ast::RustdocVisitor<'a, 'tcx> {
                     deprecation: get_deprecation(cx, def_id),
                     def_id,
                     inner: KeywordItem(kw),
+                    original_name: None,
                 }
             }));
         }
@@ -367,6 +369,7 @@ pub struct Item {
     pub def_id: DefId,
     pub stability: Option<Stability>,
     pub deprecation: Option<Deprecation>,
+    pub original_name: Option<ast::Name>,
 }
 
 impl fmt::Debug for Item {
@@ -504,6 +507,14 @@ impl Item {
     /// Returns a documentation-level item type from the item.
     pub fn type_(&self) -> ItemType {
         ItemType::from(self)
+    }
+
+    pub fn wrap_type(&self) -> ItemType {
+        if self.original_name.is_some() {
+            ItemType::Import
+        } else {
+            self.type_()
+        }
     }
 
     /// Returns the info in the item's `#[deprecated]` or `#[rustc_deprecated]` attributes.
@@ -658,7 +669,8 @@ impl Clean<Item> for doctree::Module {
             inner: ModuleItem(Module {
                is_crate: self.is_crate,
                items,
-            })
+            }),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -1948,6 +1960,7 @@ impl Clean<Item> for doctree::Function {
                 all_types,
                 ret_types,
             }),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -2149,6 +2162,7 @@ impl Clean<Item> for doctree::Trait {
                 is_spotlight,
                 is_auto: self.is_auto.clean(cx),
             }),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -2174,6 +2188,7 @@ impl Clean<Item> for doctree::TraitAlias {
                 generics: self.generics.clean(cx),
                 bounds: self.bounds.clean(cx),
             }),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -2239,6 +2254,7 @@ impl Clean<Item> for hir::TraitItem {
             stability: get_stability(cx, local_did),
             deprecation: get_deprecation(cx, local_did),
             inner,
+            original_name: None,
         }
     }
 }
@@ -2272,6 +2288,7 @@ impl Clean<Item> for hir::ImplItem {
             stability: get_stability(cx, local_did),
             deprecation: get_deprecation(cx, local_did),
             inner,
+            original_name: None,
         }
     }
 }
@@ -2432,6 +2449,7 @@ impl<'tcx> Clean<Item> for ty::AssocItem {
             attrs: inline::load_attrs(cx, self.def_id),
             source: cx.tcx.def_span(self.def_id).clean(cx),
             inner,
+            original_name: None,
         }
     }
 }
@@ -3167,6 +3185,7 @@ impl Clean<Item> for hir::StructField {
             deprecation: get_deprecation(cx, local_did),
             def_id: local_did,
             inner: StructFieldItem(self.ty.clean(cx)),
+            original_name: None,
         }
     }
 }
@@ -3182,6 +3201,7 @@ impl<'tcx> Clean<Item> for ty::FieldDef {
             deprecation: get_deprecation(cx, self.did),
             def_id: self.did,
             inner: StructFieldItem(cx.tcx.type_of(self.did).clean(cx)),
+            original_name: None,
         }
     }
 }
@@ -3247,6 +3267,7 @@ impl Clean<Item> for doctree::Struct {
                 fields: self.fields.clean(cx),
                 fields_stripped: false,
             }),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -3267,6 +3288,7 @@ impl Clean<Item> for doctree::Union {
                 fields: self.fields.clean(cx),
                 fields_stripped: false,
             }),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -3313,6 +3335,7 @@ impl Clean<Item> for doctree::Enum {
                 generics: self.generics.clean(cx),
                 variants_stripped: false,
             }),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -3335,6 +3358,7 @@ impl Clean<Item> for doctree::Variant {
             inner: VariantItem(Variant {
                 kind: self.def.clean(cx),
             }),
+            original_name: None,
         }
     }
 }
@@ -3361,7 +3385,8 @@ impl<'tcx> Clean<Item> for ty::VariantDef {
                             def_id: field.did,
                             stability: get_stability(cx, field.did),
                             deprecation: get_deprecation(cx, field.did),
-                            inner: StructFieldItem(cx.tcx.type_of(field.did).clean(cx))
+                            inner: StructFieldItem(cx.tcx.type_of(field.did).clean(cx)),
+                            original_name: None,
                         }
                     }).collect()
                 })
@@ -3376,6 +3401,7 @@ impl<'tcx> Clean<Item> for ty::VariantDef {
             inner: VariantItem(Variant { kind }),
             stability: get_stability(cx, self.def_id),
             deprecation: get_deprecation(cx, self.def_id),
+            original_name: None,
         }
     }
 }
@@ -3641,6 +3667,7 @@ impl Clean<Item> for doctree::Typedef {
                 type_: self.ty.clean(cx),
                 generics: self.gen.clean(cx),
             }, false),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -3665,6 +3692,7 @@ impl Clean<Item> for doctree::Existential {
                 bounds: self.exist_ty.bounds.clean(cx),
                 generics: self.exist_ty.generics.clean(cx),
             }, false),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -3717,6 +3745,7 @@ impl Clean<Item> for doctree::Static {
                 mutability: self.mutability.clean(cx),
                 expr: print_const_expr(cx, self.expr),
             }),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -3741,6 +3770,7 @@ impl Clean<Item> for doctree::Constant {
                 type_: self.type_.clean(cx),
                 expr: print_const_expr(cx, self.expr),
             }),
+            original_name: self.original_name.clone(),
         }
     }
 }
@@ -3834,7 +3864,8 @@ impl Clean<Vec<Item>> for doctree::Impl {
                 polarity: Some(self.polarity.clean(cx)),
                 synthetic: false,
                 blanket_impl: None,
-            })
+            }),
+            original_name: None,
         });
         ret
     }
@@ -3932,7 +3963,8 @@ impl Clean<Vec<Item>> for doctree::ExternCrate {
             visibility: self.vis.clean(cx),
             stability: None,
             deprecation: None,
-            inner: ExternCrateItem(self.name.clean(cx), self.path.clone())
+            inner: ExternCrateItem(self.name.clean(cx), self.path.clone()),
+            original_name: None,
         }]
     }
 }
@@ -3954,9 +3986,6 @@ impl Clean<Vec<Item>> for doctree::Import {
         // crate in Rust 2018+
         let please_inline = self.attrs.lists(sym::doc).has_word(sym::inline);
         let path = self.path.clean(cx);
-        if ::std::env::var("LOL").is_ok() {
-            println!("=> {:?} {:?}", self.glob, denied);
-        }
         let inner = if self.glob {
             if !denied {
                 let mut visited = FxHashSet::default();
@@ -3980,22 +4009,13 @@ impl Clean<Vec<Item>> for doctree::Import {
                     _ => {}
                 }
             }
-            if ::std::env::var("LOL").is_ok() {
-                println!("-> {:?} {:?}", name, denied);
-            }
             if !denied {
                 let mut visited = FxHashSet::default();
                 if let Some(items) = inline::try_inline(cx, path.res, name, &mut visited) {
                     return items;
                 }
             }
-            let x = Import::Simple(name.clean(cx), resolve_use_source(cx, path));
-            if ::std::env::var("LOL").is_ok() {
-                if let Import::Simple(ref name, ref src) = x {
-                    println!("{:?} {:?}", name, src.path.last_name());
-                }
-            }
-            x
+            Import::Simple(name.clean(cx), resolve_use_source(cx, path))
         };
 
         vec![Item {
@@ -4006,7 +4026,8 @@ impl Clean<Vec<Item>> for doctree::Import {
             visibility: self.vis.clean(cx),
             stability: None,
             deprecation: None,
-            inner: ImportItem(inner)
+            inner: ImportItem(inner),
+            original_name: None,
         }]
     }
 }
@@ -4081,6 +4102,7 @@ impl Clean<Item> for hir::ForeignItem {
             stability: get_stability(cx, local_did),
             deprecation: get_deprecation(cx, local_did),
             inner,
+            original_name: None,
         }
     }
 }
@@ -4273,6 +4295,7 @@ impl Clean<Item> for doctree::Macro {
                                 }).collect::<String>()),
                 imported_from: self.imported_from.clean(cx),
             }),
+            original_name: None,
         }
     }
 }
@@ -4297,6 +4320,7 @@ impl Clean<Item> for doctree::ProcMacro {
                 kind: self.kind,
                 helpers: self.helpers.clean(cx),
             }),
+            original_name: None,
         }
     }
 }

@@ -2701,8 +2701,8 @@ fn item_module(w: &mut fmt::Formatter<'_>, cx: &Context,
     }
 
     fn cmp(i1: &clean::Item, i2: &clean::Item, idx1: usize, idx2: usize) -> Ordering {
-        let ty1 = i1.type_();
-        let ty2 = i2.type_();
+        let ty1 = i1.wrap_type();
+        let ty2 = i2.wrap_type();
         if ty1 != ty2 {
             return (reorder(ty1), idx1).cmp(&(reorder(ty2), idx2))
         }
@@ -2746,18 +2746,13 @@ fn item_module(w: &mut fmt::Formatter<'_>, cx: &Context,
                               } else {
                                   None
                               },
-                              items[*i].type_(),
+                              items[*i].wrap_type(),
                               if items[*i].is_import() {
                                   *i
                               } else {
                                   0
                               }));
 
-    if ::std::env::var("LOL").is_ok() {
-        for i in items.iter() {
-            println!("|||> {:?} {:?} {:?}\n", i.name, i.type_(), i);
-        }
-    }
     debug!("{:?}", indices);
     let mut curty = None;
     for &idx in &indices {
@@ -2766,7 +2761,7 @@ fn item_module(w: &mut fmt::Formatter<'_>, cx: &Context,
             continue;
         }
 
-        let myty = Some(myitem.type_());
+        let myty = Some(myitem.wrap_type());
         if curty == Some(ItemType::ExternCrate) && myty == Some(ItemType::Import) {
             // Put `extern crate` and `use` re-exports in the same section.
             curty = myty;
@@ -2825,20 +2820,30 @@ fn item_module(w: &mut fmt::Formatter<'_>, cx: &Context,
                 };
 
                 let doc_value = myitem.doc_value().unwrap_or("");
+                let name = myitem.name.as_ref().unwrap();
                 write!(w, "\
                        <tr class='{stab}{add}module-item'>\
                            <td><a class=\"{class}\" href=\"{href}\" \
                                   title='{title}'>{name}</a>{unsafety_flag}</td>\
                            <td class='docblock-short'>{stab_tags}{docs}</td>\
                        </tr>",
-                       name = *myitem.name.as_ref().unwrap(),
+                       name = if let Some(ref original) = myitem.original_name {
+                           format!("{} as {}", original, name)
+                       } else {
+                           name.to_string()
+                       },
                        stab_tags = stability_tags(myitem),
                        docs = MarkdownSummaryLine(doc_value, &myitem.links()),
                        class = myitem.type_(),
                        add = add,
                        stab = stab.unwrap_or_else(|| String::new()),
                        unsafety_flag = unsafety_flag,
-                       href = item_path(myitem.type_(), myitem.name.as_ref().unwrap()),
+                       href = item_path(myitem.type_(),
+                                        &myitem.original_name.as_ref()
+                                             .map(|n| n.to_string())
+                                             .as_ref()
+                                             .unwrap_or_else(|| myitem.name.as_ref().unwrap())
+                                             .to_string()),
                        title = [full_path(cx, myitem), myitem.type_().to_string()]
                                 .iter()
                                 .filter_map(|s| if !s.is_empty() {
