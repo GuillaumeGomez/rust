@@ -58,7 +58,10 @@ mod config;
 mod core;
 mod docfs;
 mod doctree;
+#[macro_use]
+mod error;
 mod fold;
+mod formats;
 pub mod html {
     crate mod highlight;
     crate mod escape;
@@ -80,7 +83,7 @@ mod theme;
 
 struct Output {
     krate: clean::Crate,
-    renderinfo: html::render::RenderInfo,
+    renderinfo: config::RenderInfo,
     renderopts: config::RenderOptions,
 }
 
@@ -448,7 +451,7 @@ fn main_options(options: config::Options) -> i32 {
         info!("going to format");
         let (error_format, treat_err_as_bug, ui_testing, edition) = diag_opts;
         let diag = core::new_handler(error_format, None, treat_err_as_bug, ui_testing);
-        match html::render::run(
+        match formats::Renderer::new().run::<html::render::Context>(
             krate,
             renderopts,
             renderinfo,

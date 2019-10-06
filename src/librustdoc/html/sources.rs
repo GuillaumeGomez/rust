@@ -1,8 +1,9 @@
 use crate::clean;
 use crate::docfs::PathError;
+use crate::error::Error;
 use crate::fold::DocFolder;
 use crate::html::layout;
-use crate::html::render::{Error, SharedContext, BASIC_KEYWORDS};
+use crate::html::render::{SharedContext, BASIC_KEYWORDS};
 use crate::html::highlight;
 use crate::html::format::Buffer;
 use std::ffi::OsStr;
@@ -10,8 +11,11 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use syntax::source_map::FileName;
 
-crate fn render(dst: &Path, scx: &mut SharedContext,
-                  krate: clean::Crate) -> Result<clean::Crate, Error> {
+crate fn render(
+    dst: &Path,
+    scx: &mut SharedContext,
+    krate: clean::Crate,
+) -> Result<clean::Crate, Error> {
     info!("emitting source files");
     let dst = dst.join("src").join(&krate.name);
     scx.ensure_dir(&dst)?;

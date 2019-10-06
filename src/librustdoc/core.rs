@@ -31,7 +31,7 @@ use std::rc::Rc;
 use crate::config::{Options as RustdocOptions, RenderOptions};
 use crate::clean;
 use crate::clean::{MAX_DEF_ID, AttributesExt};
-use crate::html::render::RenderInfo;
+use crate::config::RenderInfo;
 
 use crate::passes;
 

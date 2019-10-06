@@ -5,13 +5,16 @@ use std::path::PathBuf;
 
 use errors;
 use getopts;
+use rustc::hir::def_id::DefId;
 use rustc::lint::Level;
+use rustc::middle::privacy::AccessLevels;
 use rustc::session;
 use rustc::session::config::{CrateType, parse_crate_types_from_list};
 use rustc::session::config::{CodegenOptions, DebuggingOptions, ErrorOutputType, Externs};
 use rustc::session::config::{nightly_options, build_codegen_options, build_debugging_options,
                              get_cmd_lint_options, host_triple, ExternEntry};
 use rustc::session::search_paths::SearchPath;
+use rustc::util::nodemap::{FxHashMap, FxHashSet};
 use rustc_driver;
 use rustc_target::spec::TargetTriple;
 use syntax::edition::{Edition, DEFAULT_EDITION};
@@ -222,6 +225,19 @@ pub struct RenderOptions {
     pub generate_search_filter: bool,
     /// Option (disabled by default) to generate files used by RLS and some other tools.
     pub generate_redirect_pages: bool,
+}
+
+/// Temporary storage for data obtained during `RustdocVisitor::clean()`.
+/// Later on moved into `CACHE_KEY`.
+#[derive(Default)]
+pub struct RenderInfo {
+    pub inlined: FxHashSet<DefId>,
+    pub external_paths: crate::core::ExternalPaths,
+    pub exact_paths: FxHashMap<DefId, Vec<String>>,
+    pub access_levels: AccessLevels<DefId>,
+    pub deref_trait_did: Option<DefId>,
+    pub deref_mut_trait_did: Option<DefId>,
+    pub owned_box_did: Option<DefId>,
 }
 
 impl Options {
