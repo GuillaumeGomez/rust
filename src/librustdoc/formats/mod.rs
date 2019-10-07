@@ -2,9 +2,6 @@ use crate::clean;
 use crate::config::{RenderInfo, RenderOptions};
 use crate::error::Error;
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use syntax::edition::Edition;
 
 pub trait FormatRenderer: Clone {
@@ -16,7 +13,6 @@ pub trait FormatRenderer: Clone {
         renderinfo: RenderInfo,
         diag: &errors::Handler,
         edition: Edition,
-        parent: Rc<RefCell<Renderer>>,
     ) -> Result<(Self::Output, clean::Crate), Error>;
 
     fn after_run(&mut self, diag: &errors::Handler) -> Result<(), Error>;
@@ -60,9 +56,8 @@ impl Renderer {
         diag: &errors::Handler,
         edition: Edition,
     ) -> Result<(), Error> {
-        let rself = Rc::new(RefCell::new(self));
         let (mut renderer, mut krate) = T::init(
-            krate, options, renderinfo, diag, edition, rself.clone(),
+            krate, options, renderinfo, diag, edition,
         )?;
         let mut item = match krate.module.take() {
             Some(i) => i,

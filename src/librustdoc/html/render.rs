@@ -60,7 +60,7 @@ use crate::config::{RenderInfo, RenderOptions};
 use crate::docfs::{DocFS, ErrorStorage, PathError};
 use crate::doctree;
 use crate::error::Error;
-use crate::formats::{FormatRenderer, Renderer};
+use crate::formats::FormatRenderer;
 use crate::html::escape::Escape;
 use crate::html::format::{Buffer, PrintWithSpace, print_abi_with_space};
 use crate::html::format::{print_generic_bounds, WhereClause, href, print_default_space};
@@ -117,7 +117,6 @@ crate struct Context {
     id_map: Rc<RefCell<IdMap>>,
     pub shared: Arc<SharedContext>,
     pub cache: Arc<Cache>,
-    pub parent: Rc<RefCell<Renderer>>,
     all: Rc<RefCell<AllTypes>>,
     pub errors: Arc<ErrorStorage>,
 }
@@ -345,7 +344,6 @@ impl FormatRenderer for Context {
         renderinfo: RenderInfo,
         diag: &errors::Handler,
         edition: Edition,
-        parent: Rc<RefCell<Renderer>>,
     ) -> Result<(Context, clean::Crate), Error> {
         // need to save a copy of the options for rendering the index page
         let md_opts = options.clone();
@@ -458,7 +456,6 @@ impl FormatRenderer for Context {
             cache: cache.clone(),
             all: Rc::new(RefCell::new(AllTypes::new())),
             errors,
-            parent,
         };
 
         // Freeze the cache now that the index has been built. Put an Arc into TLS
