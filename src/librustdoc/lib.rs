@@ -47,8 +47,12 @@ use std::env;
 use std::panic;
 use std::process;
 
+use crate::config::{RenderInfo, RenderOptions};
+
 use rustc::session::{early_warn, early_error};
 use rustc::session::config::{ErrorOutputType, RustcOptGroup, make_crate_type_option};
+
+use syntax::edition::Edition;
 
 #[macro_use]
 mod externalfiles;
@@ -74,6 +78,7 @@ pub mod html {
     crate mod toc;
     crate mod sources;
 }
+crate mod json;
 mod markdown;
 mod passes;
 mod visit_ast;
@@ -132,7 +137,7 @@ fn opts() -> Vec<RustcOptGroup> {
                      "[rust]")
         }),
         stable("w", |o| {
-            o.optopt("w", "output-format", "the output type to write", "[html]")
+            o.optopt("w", "output-format", "the output type to write", "html|json")
         }),
         stable("o", |o| o.optopt("o", "output", "where to place the output", "PATH")),
         stable("crate-name", |o| {
@@ -417,6 +422,30 @@ fn main_args(args: &[String]) -> i32 {
     })
 }
 
+fn run_renderer<T: formats::FormatRenderer>(
+    krate: clean::Crate,
+    renderopts: RenderOptions,
+    renderinfo: RenderInfo,
+    diag: &errors::Handler,
+    edition: Edition,
+) -> i32 {
+    match formats::Renderer::new().run::<T>(
+        krate,
+        renderopts,
+        renderinfo,
+        &diag,
+        edition,
+    ) {
+        Ok(_) => rustc_driver::EXIT_SUCCESS,
+        Err(e) => {
+            diag.struct_err(&format!("couldn't generate documentation: {}", e.error))
+                .note(&format!("failed to create or modify \"{}\"", e.file.display()))
+                .emit();
+            rustc_driver::EXIT_FAILURE
+        }
+    }
+}
+
 fn main_options(options: config::Options) -> i32 {
     let diag = core::new_handler(options.error_format,
                                  None,
@@ -451,18 +480,15 @@ fn main_options(options: config::Options) -> i32 {
         info!("going to format");
         let (error_format, treat_err_as_bug, ui_testing, edition) = diag_opts;
         let diag = core::new_handler(error_format, None, treat_err_as_bug, ui_testing);
-        match formats::Renderer::new().run::<html::render::Context>(
-            krate,
-            renderopts,
-            renderinfo,
-            &diag,
-            edition,
-        ) {
-            Ok(_) => rustc_driver::EXIT_SUCCESS,
-            Err(e) => {
-                diag.struct_err(&format!("couldn't generate documentation: {}", e.error))
-                    .note(&format!("failed to create or modify \"{}\"", e.file.display()))
-                    .emit();
+        match renderopts.output_format.as_str() {
+            "html" => {
+                run_renderer::<html::render::Context>(krate, renderopts, renderinfo, &diag, edition)
+            }
+            "json" => {
+                run_renderer::<json::Context>(krate, renderopts, renderinfo, &diag, edition)
+            }
+            x => {
+                eprintln!("Unknown `output-format` \"{}\"", x);
                 rustc_driver::EXIT_FAILURE
             }
         }

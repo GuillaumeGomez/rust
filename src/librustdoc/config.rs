@@ -225,6 +225,8 @@ pub struct RenderOptions {
     pub generate_search_filter: bool,
     /// Option (disabled by default) to generate files used by RLS and some other tools.
     pub generate_redirect_pages: bool,
+    /// Output format of generated documentation.
+    pub output_format: String,
 }
 
 /// Temporary storage for data obtained during `RustdocVisitor::clean()`.
@@ -441,7 +443,7 @@ impl Options {
         }
 
         match matches.opt_str("w").as_ref().map(|s| &**s) {
-            Some("html") | None => {}
+            Some("html") | Some("json") | None => {}
             Some(s) => {
                 diag.struct_err(&format!("unknown output format: {}", s)).emit();
                 return Err(1);
@@ -489,6 +491,8 @@ impl Options {
                 return Err(1);
             }
         };
+
+        let output_format = matches.opt_str("output-format").unwrap_or_else(|| "html".to_owned());
 
         let crate_name = matches.opt_str("crate-name");
         let proc_macro_crate = crate_types.contains(&CrateType::ProcMacro);
@@ -569,6 +573,7 @@ impl Options {
                 markdown_playground_url,
                 generate_search_filter,
                 generate_redirect_pages,
+                output_format,
             }
         })
     }
@@ -584,7 +589,6 @@ impl Options {
 fn check_deprecated_options(matches: &getopts::Matches, diag: &errors::Handler) {
     let deprecated_flags = [
        "input-format",
-       "output-format",
        "no-defaults",
        "passes",
     ];

@@ -60,7 +60,7 @@ use crate::config::{RenderInfo, RenderOptions};
 use crate::docfs::{DocFS, ErrorStorage, PathError};
 use crate::doctree;
 use crate::error::Error;
-use crate::formats::FormatRenderer;
+use crate::formats::{FormatRenderer, get_attributes};
 use crate::html::escape::Escape;
 use crate::html::format::{Buffer, PrintWithSpace, print_abi_with_space};
 use crate::html::format::{print_generic_bounds, WhereClause, href, print_default_space};
@@ -103,9 +103,7 @@ crate fn ensure_trailing_slash(v: &str) -> impl fmt::Display + '_ {
 /// rustdoc tree).
 #[derive(Clone)]
 crate struct Context {
-    /// Current hierarchy of components leading down to what's currently being
-    /// rendered
-    pub current: Vec<String>,
+    current: Vec<String>,
     /// The current destination folder of where HTML artifacts should be placed.
     /// This changes as the context descends into the module hierarchy.
     pub dst: PathBuf,
@@ -161,26 +159,6 @@ crate struct SharedContext {
     pub edition: Edition,
     pub codes: ErrorCodes,
     playground: Option<markdown::Playground>,
-}
-
-impl Context {
-    fn path(&self, filename: &str) -> PathBuf {
-        // We use splitn vs Path::extension here because we might get a filename
-        // like `style.min.css` and we want to process that into
-        // `style-suffix.min.css`.  Path::extension would just return `css`
-        // which would result in `style.min-suffix.css` which isn't what we
-        // want.
-        let mut iter = filename.splitn(2, '.');
-        let base = iter.next().unwrap();
-        let ext = iter.next().unwrap();
-        let filename = format!(
-            "{}{}.{}",
-            base,
-            self.shared.resource_suffix,
-            ext,
-        );
-        self.dst.join(&filename)
-    }
 }
 
 impl SharedContext {
@@ -555,7 +533,8 @@ impl FormatRenderer for Context {
         &mut self,
         item: &clean::Item,
         item_name: &str,
-        module: &clean::Module,
+        full_parent_item_path: &str,
+        // TODO: give full module path and remove Context.current field
     ) -> Result<(), Error> {
         // Stripped modules survive the rustdoc passes (i.e., `strip-private`)
         // if they contain impls for public types. These modules can also
@@ -567,9 +546,10 @@ impl FormatRenderer for Context {
         if !self.render_redirect_pages {
             self.render_redirect_pages = item.is_stripped();
         }
-        let scx = &self.shared;
-        //let prev = self.dst.clone();
         self.dst.push(item_name);
+        self.current.push(item_name.to_owned());
+
+        let scx = &self.shared;
 
         info!("Recursing into {}", self.dst.display());
 
@@ -581,10 +561,13 @@ impl FormatRenderer for Context {
             scx.fs.write(&joint_dst, buf.as_bytes())?;
         }
 
-        ;
-
         // Render sidebar-items.js used throughout this module.
         if !self.render_redirect_pages {
+            let module = match item.inner {
+                clean::StrippedItem(box clean::ModuleItem(ref m)) |
+                clean::ModuleItem(ref m) => m,
+                _ => unreachable!()
+            };
             let items = self.build_sidebar_items(module);
             let js_dst = self.dst.join("sidebar-items.js");
             let v = format!("initSidebarItems({});", as_json(&items));
@@ -595,10 +578,9 @@ impl FormatRenderer for Context {
         Ok(())
     }
 
-    fn mod_item_out(&mut self) -> Result<(), Error> {
+    fn mod_item_out(&mut self, name: &str, _full_item_path: &str) -> Result<(), Error> {
         // Go back to where we were at
         self.dst.pop();
-        self.current.pop();
         Ok(())
     }
 
@@ -607,7 +589,7 @@ impl FormatRenderer for Context {
     /// all sub-items which need to be rendered.
     ///
     /// The rendering driver uses this closure to queue up more work.
-    fn item(&mut self, item: clean::Item) -> Result<(), Error> {
+    fn item(&mut self, item: clean::Item, _full_item_path: &str) -> Result<(), Error> {
         // Stripped modules survive the rustdoc passes (i.e., `strip-private`)
         // if they contain impls for public types. These modules can also
         // contain items such as publicly re-exported structures.
@@ -1441,6 +1423,24 @@ fn settings(root_path: &str, suffix: &str) -> String {
 }
 
 impl Context {
+    fn path(&self, filename: &str) -> PathBuf {
+        // We use splitn vs Path::extension here because we might get a filename
+        // like `style.min.css` and we want to process that into
+        // `style-suffix.min.css`.  Path::extension would just return `css`
+        // which would result in `style.min-suffix.css` which isn't what we
+        // want.
+        let mut iter = filename.splitn(2, '.');
+        let base = iter.next().unwrap();
+        let ext = iter.next().unwrap();
+        let filename = format!(
+            "{}{}.{}",
+            base,
+            self.shared.resource_suffix,
+            ext,
+        );
+        self.dst.join(&filename)
+    }
+
     fn derive_id(&self, id: String) -> String {
         let mut map = self.id_map.borrow_mut();
         map.derive(id)
@@ -1679,11 +1679,10 @@ fn print_item(cx: &Context, item: &clean::Item, buf: &mut Buffer) {
     };
     buf.write_str(name);
     if !item.is_primitive() && !item.is_keyword() {
-        let cur = &cx.current;
-        let amt = if item.is_mod() { cur.len() - 1 } else { cur.len() };
-        for (i, component) in cur.iter().enumerate().take(amt) {
+        let amt = if item.is_mod() { cx.current.len() - 1 } else { cx.current.len() };
+        for (i, component) in cx.current.iter().enumerate().take(amt) {
             write!(buf, "<a href='{}index.html'>{}</a>::<wbr>",
-                    "../".repeat(cur.len() - i - 1),
+                    "../".repeat(cx.current.len() - i - 1),
                     component);
         }
     }
@@ -2958,38 +2957,6 @@ fn item_enum(w: &mut Buffer, cx: &Context, it: &clean::Item, e: &clean::Enum) {
     render_assoc_items(w, cx, it, it.def_id, AssocItemRender::All)
 }
 
-fn render_attribute(attr: &ast::MetaItem) -> Option<String> {
-    let path = pprust::path_to_string(&attr.path);
-
-    if attr.is_word() {
-        Some(path)
-    } else if let Some(v) = attr.value_str() {
-        Some(format!("{} = {:?}", path, v))
-    } else if let Some(values) = attr.meta_item_list() {
-        let display: Vec<_> = values.iter().filter_map(|attr| {
-            attr.meta_item().and_then(|mi| render_attribute(mi))
-        }).collect();
-
-        if display.len() > 0 {
-            Some(format!("{}({})", path, display.join(", ")))
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-}
-
-const ATTRIBUTE_WHITELIST: &'static [Symbol] = &[
-    sym::export_name,
-    sym::lang,
-    sym::link_section,
-    sym::must_use,
-    sym::no_mangle,
-    sym::repr,
-    sym::non_exhaustive
-];
-
 // The `top` parameter is used when generating the item declaration to ensure it doesn't have a
 // left padding. For example:
 //
@@ -2999,19 +2966,12 @@ const ATTRIBUTE_WHITELIST: &'static [Symbol] = &[
 //     bar: usize,
 // }
 fn render_attributes(w: &mut Buffer, it: &clean::Item, top: bool) {
-    let mut attrs = String::new();
+    let attrs = get_attributes(it);
 
-    for attr in &it.attrs.other_attrs {
-        if !ATTRIBUTE_WHITELIST.contains(&attr.name_or_empty()) {
-            continue;
-        }
-        if let Some(s) = render_attribute(&attr.meta().unwrap()) {
-            attrs.push_str(&format!("#[{}]\n", s));
-        }
-    }
-    if attrs.len() > 0 {
+    if !attrs.is_empty() {
         write!(w, "<span class=\"docblock attributes{}\">{}</span>",
-               if top { " top-attr" } else { "" }, &attrs);
+               if top { " top-attr" } else { "" },
+               &attrs.into_iter().map(|a| format!("#[{}]\n", a)).collect::<String>());
     }
 }
 
