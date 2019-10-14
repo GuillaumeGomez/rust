@@ -203,10 +203,7 @@ impl clean::GenericParamDef {
 impl clean::Generics {
     crate fn print(&self) -> impl fmt::Display + '_ {
         display_fn(move |f| {
-            let real_params = self.params
-                .iter()
-                .filter(|p| !p.is_synthetic_type_param())
-                .collect::<Vec<_>>();
+            let real_params = self.get_params();
             if real_params.is_empty() {
                 return Ok(());
             }

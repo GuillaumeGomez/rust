@@ -7,6 +7,7 @@ use std::rc::Rc;
 use crate::clean;
 use crate::config::{RenderInfo, RenderOptions};
 use crate::docfs::PathError;
+use crate::doctree;
 use crate::error::Error;
 use crate::formats::{FormatRenderer, get_attributes};
 
@@ -125,7 +126,7 @@ impl Context {
 
     fn render_item(&mut self, item: clean::Item, nb_items: usize) -> Result<(), Error> {
         println!("render_item");
-        let mut buf = format!("{comma}{{\"name\":{name},\"doc\":{doc},\"kind\":{kind}",
+        let mut buf = format!("{comma}{{\"name\":{name},\"doc\":{doc},\"type\":{kind}",
                               comma=if nb_items > 0 { "," } else { "" },
                               name=item.name.as_ref().unwrap().to_json(),
                               doc=item.doc_value().unwrap_or_else(|| "").to_json(),
@@ -168,24 +169,58 @@ impl Context {
     }
 
     fn render_struct(&self, w: &mut String, it: &clean::Item, s: &clean::Struct) {
-        /*s.generics
-        if let doctree::Plain = s.struct_type {
-            let mut fields = s.fields.iter().filter_map(|f| {
-            match f.inner {
-                clean::StructFieldItem(ref ty) => Some((f, ty)),
-                _ => None,
+        self.render_generics(w, s);
+        match s.struct_type {
+            doctree::Plain => {
+                let f = s.fields.iter()
+                    .filter_map(|f| {
+                        if let clean::StructFieldItem(ref ty) = f.inner {
+                            Some(format!("{{\"name\":{},\"type-name\":{}}}",
+                                f.name.as_ref().unwrap(),
+                                ty.as_str(),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                w.push_str(
+                    &format!(",\"kind\":\"plain\",\"fields\":{},\"has-hidden-fields\":{}",
+                        f.to_json(),
+                        (!s.fields.is_empty() && f.is_empty()) || it.has_stripped_fields().unwrap(),
+                    ));
             }
-        }).peekable();
-            write!(w, "<span id=\"{id}\" class=\"{item_type} small-section-header\">\
-                           <a href=\"#{id}\" class=\"anchor field\"></a>\
-                           <code id=\"{ns_id}\">{name}: {ty}</code>\
-                           </span>",
-                       item_type = ItemType::StructField,
-                       id = id,
-                       ns_id = ns_id,
-                       name = field.name.as_ref().unwrap(),
-                       ty = ty.print());
-                document(w, cx, field);*/
+            doctree::Tuple => {
+                let f = s.fields.iter()
+                    .filter_map(|f| {
+                        match f.inner {
+                            clean::StrippedItem(box clean::StructFieldItem(..)) => {
+                                Some("_".to_owned())
+                            }
+                            clean::StructFieldItem(ref ty) => {
+                                Some(ty.as_str())
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                w.push_str(&format!(",\"kind\":\"tuple\",\"fields\":{}", f.to_json()));
+            }
+            doctree::Unit => {
+                w.push_str(",\"kind\":\"unit\"");
+            }
+        }
+    }
+
+    fn render_generics(&self, w: &mut String, it: &clean::Struct) {
+        let real_params = it.generics.get_params();
+        if real_params.is_empty() {
+            return;
+        }
+        let real_params = real_params.into_iter()
+            .map(|p| p.as_str())
+            .collect::<Vec<String>>();
+        w.push_str(&format!(",\"generics\":{}", real_params.to_json()));
     }
 
     fn write(&mut self, s: &str) -> Result<(), Error> {

@@ -1102,6 +1102,20 @@ impl GenericBound {
             None
         }
     }
+
+    pub fn as_str(&self) -> String {
+        match *self {
+            GenericBound::TraitBound(ref poly_trait, ref trait_bound_modifier) => {
+                format!("{}{}",
+                    match trait_bound_modifier {
+                        hir::TraitBoundModifier::Maybe => "?",
+                        _ => "",
+                    },
+                    poly_trait.as_str())
+            }
+            GenericBound::Outlives(Lifetime(ref l)) => format!("'{}", l),
+        }
+    }
 }
 
 impl Clean<GenericBound> for hir::GenericBound {
@@ -1535,6 +1549,27 @@ impl GenericParamDef {
             _ => None,
         }
     }
+
+    pub fn as_str(&self) -> String {
+        match self.kind {
+            GenericParamDefKind::Lifetime => format!("'{}", self.name),
+            GenericParamDefKind::Type { ref bounds, ref default, .. } => {
+                // TODO: if no default, change bounds display
+                let bounds = bounds.iter().map(|b| b.as_str()).collect::<Vec<_>>().join(" + ");
+                if let Some(default) = default {
+                    format!("type {} = {}{}", self.name, default.as_str(), bounds)
+                } else {
+                    format!("{}{}",
+                        self.name,
+                        if bounds.is_empty() { String::new() } else { format!(": {}", bounds) },
+                    )
+                }
+            }
+            GenericParamDefKind::Const { ref ty, .. } => {
+                format!("const {}: {}", self.name, ty.as_str())
+            }
+        }
+    }
 }
 
 impl Clean<GenericParamDef> for ty::GenericParamDef {
@@ -1619,6 +1654,15 @@ impl Clean<GenericParamDef> for hir::GenericParam {
 pub struct Generics {
     pub params: Vec<GenericParamDef>,
     pub where_predicates: Vec<WherePredicate>,
+}
+
+impl Generics {
+    pub fn get_params<'a>(&'a self) -> Vec<&'a GenericParamDef> {
+        self.params
+            .iter()
+            .filter(|p| !p.is_synthetic_type_param())
+            .collect::<Vec<_>>()
+    }
 }
 
 impl Clean<Generics> for hir::Generics {
@@ -2548,6 +2592,15 @@ pub struct PolyTrait {
     pub generic_params: Vec<GenericParamDef>,
 }
 
+impl PolyTrait {
+    pub fn as_str(&self) -> String {
+        format!("{}{}",
+            self.trait_.as_str(),
+            self.generic_params.iter().map(|g| g.as_str()).collect::<Vec<_>>().join(" + "),
+        )
+    }
+}
+
 /// A representation of a type suitable for hyperlinking purposes. Ideally, one can get the original
 /// type out of the AST/`TyCtxt` given one of these, if more information is needed. Most
 /// importantly, it does not preserve mutability or boxes.
@@ -2592,6 +2645,46 @@ pub enum Type {
 
     // `impl TraitA + TraitB + ...`
     ImplTrait(Vec<GenericBound>),
+}
+
+impl Type {
+    pub fn as_str(&self) -> String {
+        match *self {
+            Type::ResolvedPath { ref path, .. } => path.as_str(),
+            Type::Generic(ref s) => s.clone(),
+            Type::Primitive(ref p) => p.as_str().to_owned(),
+            Type::BareFunction(ref b) => "extern fn".to_owned(), // TODO: finish impl
+            Type::Tuple(ref vt) => {
+                format!("({})",
+                    vt.iter().map(|t| t.as_str().to_string()).collect::<Vec<_>>().join(", "))
+            }
+            Type::Slice(ref st) => format!("[{}]", st.as_str()),
+            Type::Array(ref t, ref length) => format!("[{}; {}]", t.as_str(), length),
+            Type::Never => "!".to_owned(),
+            Type::RawPointer(ref m, ref t) => {
+                format!("*{}{}",
+                    if let Mutability::Mutable = m { "mut "} else { "" },
+                    t.as_str(),
+                )
+            }
+            Type::BorrowedRef {
+                ref lifetime,
+                ref mutability,
+                ref type_,
+            } => {
+                format!("&{}{}{}",
+                    if let Some(Lifetime(l)) = lifetime { format!("'{} ", l) } else { String::new() },
+                    if let Mutability::Mutable = mutability { "mut "} else { "" },
+                    type_.as_str(),
+                )
+            }
+            Type::QPath { ref name, ref self_type, ref trait_ } => {
+                format!("<{} as {}>::{}", self_type.as_str(), trait_.as_str(), name)
+            }
+            Type::Infer => "_".to_owned(),
+            Type::ImplTrait(_) => "impl X".to_owned(), // TODO: finish impl
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Copy, Debug)]
@@ -3578,6 +3671,10 @@ pub struct Path {
 impl Path {
     pub fn last_name(&self) -> &str {
         self.segments.last().expect("segments were empty").name.as_str()
+    }
+
+    pub fn as_str(&self) -> String {
+        self.segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join("::")
     }
 }
 
