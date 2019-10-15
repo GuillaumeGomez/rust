@@ -212,8 +212,8 @@ impl Context {
         }
     }
 
-    fn render_generics(&self, w: &mut String, it: &clean::Struct) {
-        let real_params = it.generics.get_params();
+    fn render_generics<T: clean::GetGenerics>(&self, w: &mut String, it: &T) {
+        let real_params = it.generics().get_params();
         if real_params.is_empty() {
             return;
         }

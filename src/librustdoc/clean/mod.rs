@@ -351,6 +351,10 @@ impl Clean<ExternalCrate> for CrateNum {
     }
 }
 
+pub trait GetGenerics {
+    fn generics(&self) -> &Generics;
+}
+
 /// Anything with a source location and set of attributes and, optionally, a
 /// name. That is, anything that can be documented. This doesn't correspond
 /// directly to the AST's concept of an item; it's a strict superset.
@@ -2029,6 +2033,12 @@ pub struct Method {
     pub ret_types: Vec<Type>,
 }
 
+impl GetGenerics for Method {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
+}
+
 impl<'a> Clean<Method> for (&'a hir::FnSig, &'a hir::Generics, hir::BodyId,
                             Option<hir::Defaultness>) {
     fn clean(&self, cx: &DocContext<'_>) -> Method {
@@ -2056,6 +2066,12 @@ pub struct TyMethod {
     pub ret_types: Vec<Type>,
 }
 
+impl GetGenerics for TyMethod {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub decl: FnDecl,
@@ -2063,6 +2079,12 @@ pub struct Function {
     pub header: hir::FnHeader,
     pub all_types: Vec<Type>,
     pub ret_types: Vec<Type>,
+}
+
+impl GetGenerics for Function {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
 }
 
 impl Clean<Item> for doctree::Function<'_> {
@@ -2276,6 +2298,12 @@ pub struct Trait {
     pub is_auto: bool,
 }
 
+impl GetGenerics for Trait {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
+}
+
 impl Clean<Item> for doctree::Trait<'_> {
     fn clean(&self, cx: &DocContext<'_>) -> Item {
         let attrs = self.attrs.clean(cx);
@@ -2305,6 +2333,12 @@ impl Clean<Item> for doctree::Trait<'_> {
 pub struct TraitAlias {
     pub generics: Generics,
     pub bounds: Vec<GenericBound>,
+}
+
+impl GetGenerics for TraitAlias {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
 }
 
 impl Clean<Item> for doctree::TraitAlias<'_> {
@@ -3440,12 +3474,24 @@ pub struct Struct {
     pub fields_stripped: bool,
 }
 
+impl GetGenerics for Struct {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Union {
     pub struct_type: doctree::StructType,
     pub generics: Generics,
     pub fields: Vec<Item>,
     pub fields_stripped: bool,
+}
+
+impl GetGenerics for Union {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
 }
 
 impl Clean<Item> for doctree::Struct<'_> {
@@ -3513,6 +3559,12 @@ pub struct Enum {
     pub variants: IndexVec<VariantIdx, Item>,
     pub generics: Generics,
     pub variants_stripped: bool,
+}
+
+impl GetGenerics for Enum {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
 }
 
 impl Clean<Item> for doctree::Enum<'_> {
@@ -3830,6 +3882,12 @@ pub struct Typedef {
     pub generics: Generics,
 }
 
+impl GetGenerics for Typedef {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
+}
+
 impl Clean<Item> for doctree::Typedef<'_> {
     fn clean(&self, cx: &DocContext<'_>) -> Item {
         Item {
@@ -3852,6 +3910,12 @@ impl Clean<Item> for doctree::Typedef<'_> {
 pub struct OpaqueTy {
     pub bounds: Vec<GenericBound>,
     pub generics: Generics,
+}
+
+impl GetGenerics for OpaqueTy {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
 }
 
 impl Clean<Item> for doctree::OpaqueTy<'_> {
@@ -3991,6 +4055,12 @@ pub struct Impl {
     pub polarity: Option<ImplPolarity>,
     pub synthetic: bool,
     pub blanket_impl: Option<Type>,
+}
+
+impl GetGenerics for Impl {
+    fn generics(&self) -> &Generics {
+        &self.generics
+    }
 }
 
 pub fn get_auto_trait_and_blanket_impls(
