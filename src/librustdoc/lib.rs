@@ -65,19 +65,8 @@ mod doctree;
 #[macro_use]
 mod error;
 mod fold;
-mod formats;
-pub mod html {
-    crate mod highlight;
-    crate mod escape;
-    crate mod item_type;
-    crate mod format;
-    crate mod layout;
-    pub mod markdown;
-    crate mod render;
-    crate mod static_files;
-    crate mod toc;
-    crate mod sources;
-}
+crate mod formats;
+crate mod html;
 crate mod json;
 mod markdown;
 mod passes;

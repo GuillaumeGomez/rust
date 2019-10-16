@@ -10,11 +10,12 @@ use crate::docfs::PathError;
 use crate::doctree;
 use crate::error::Error;
 use crate::formats::{FormatRenderer, get_attributes};
+use crate::formats::cache::Cache;
 
 use rustc::util::nodemap::FxHashMap;
-use serialize::json::{ToJson, Json, as_json};
-use syntax::symbol::{Symbol, sym};
-use syntax::ast;
+use serialize::json::{ToJson/*, Json, as_json*/};
+//use syntax::symbol::{Symbol, sym};
+//use syntax::ast;
 use syntax::edition::Edition;
 
 #[derive(Clone)]
@@ -23,18 +24,6 @@ pub struct Context {
     file: Rc<RefCell<File>>,
     mods: Rc<RefCell<FxHashMap<String, usize>>>,
     path: Rc<PathBuf>,
-}
-
-struct Elem {
-    name: String,
-    doc: String,
-    type_: String,
-    // variants on enums, arguments on functions, fields on structs
-    /*fields: Vec<Elem>,
-    functions: Vec<Elem>,
-    trait_impls: Vec<Elem>,
-    blanket_impls: Vec<Elem>,
-    auto_impls: Vec<Elem>,*/
 }
 
 impl FormatRenderer for Context {
@@ -46,6 +35,7 @@ impl FormatRenderer for Context {
         renderinfo: RenderInfo,
         diag: &errors::Handler,
         edition: Edition,
+        _ : &mut Cache,
     ) -> Result<(Context, clean::Crate), Error> {
         let RenderOptions {
             output,
@@ -80,7 +70,7 @@ impl FormatRenderer for Context {
         Ok(())
     }
 
-    fn after_krate(&mut self, krate: &clean::Crate) -> Result<(), Error> {
+    fn after_krate(&mut self, krate: &clean::Crate, _: &Cache) -> Result<(), Error> {
         Ok(())
     }
 
@@ -89,6 +79,7 @@ impl FormatRenderer for Context {
         item: &clean::Item,
         item_name: &str,
         full_parent_item_path: &str,
+        _: &Cache,
     ) -> Result<(), Error> {
         let nb: usize = *self.mods.borrow().get(full_parent_item_path).unwrap_or_else(|| &0);
         self.render_mod(item, nb)?;
@@ -105,7 +96,7 @@ impl FormatRenderer for Context {
         self.write("]}")
     }
 
-    fn item(&mut self, item: clean::Item, full_item_path: &str) -> Result<(), Error> {
+    fn item(&mut self, item: clean::Item, full_item_path: &str, _: &Cache) -> Result<(), Error> {
         println!("item");
         let nb: usize = *self.mods.borrow().get(full_item_path).unwrap_or_else(|| &0);
         self.render_item(item, nb)?;

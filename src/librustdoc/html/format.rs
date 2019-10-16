@@ -15,8 +15,10 @@ use rustc_target::spec::abi::Abi;
 use rustc::hir;
 
 use crate::clean::{self, PrimitiveType};
-use crate::html::item_type::ItemType;
-use crate::html::render::{self, cache, CURRENT_DEPTH};
+//use crate::formats;
+use crate::formats::cache::cache;
+use crate::formats::item_type::ItemType;
+use crate::html::render::{self, CURRENT_DEPTH};
 
 pub trait Print {
     fn print(self, buffer: &mut Buffer);
