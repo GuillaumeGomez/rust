@@ -141,8 +141,9 @@ impl Context {
                                       .join(","))); // replace with to json
         }
         match item.inner {
-            // clean::ModuleItem(ref m) =>
-            //     item_module(buf, cx, item, &m.items),
+            clean::ModuleItem(ref m) => {
+                // we do nothing
+            }
             // clean::FunctionItem(ref f) | clean::ForeignFunctionItem(ref f) =>
             //     item_function(buf, cx, item, f),
             // clean::TraitItem(ref t) => item_trait(buf, cx, item, t),
