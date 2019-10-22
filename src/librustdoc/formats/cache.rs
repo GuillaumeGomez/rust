@@ -10,8 +10,9 @@ use syntax::source_map::FileName;
 use syntax::symbol::sym;
 //use serialize::json::{ToJson, Json, as_json};
 
+use crate::formats::Impl;
 use crate::formats::item_type::ItemType;
-use crate::html::render::{IndexItem, IndexItemFunctionType, Impl, plain_summary_line, shorten};
+use crate::html::render::{IndexItem, IndexItemFunctionType, plain_summary_line, shorten};
 use crate::html::render::Type;
 use crate::html::render::cache::{extern_location, ExternalLocation};
 use crate::config::RenderInfo;

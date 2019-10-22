@@ -63,8 +63,9 @@ use crate::config::{RenderInfo, RenderOptions};
 use crate::docfs::{DocFS, ErrorStorage, PathError};
 use crate::doctree;
 use crate::error::Error;
-use crate::formats::{FormatRenderer, get_attributes};
-use crate::formats::cache::{cache, Cache};
+use crate::formats::{AssocItemRender, RenderMode, FormatRenderer, Impl, get_attributes};
+use crate::formats::stability::{self, StabilityState, UnstabilityInfo};
+use crate::formats::cache::{cache, Cache,};
 use crate::html::escape::Escape;
 use crate::html::format::{Buffer, PrintWithSpace, print_abi_with_space};
 use crate::html::format::{print_generic_bounds, WhereClause, href, print_default_space};
@@ -181,25 +182,6 @@ impl SharedContext {
         } else {
             item.doc_value().map(|s| s.into())
         }
-    }
-}
-
-/// Metadata about implementations for a type or trait.
-#[derive(Clone, Debug)]
-pub struct Impl {
-    pub impl_item: clean::Item,
-}
-
-impl Impl {
-    pub fn inner_impl(&self) -> &clean::Impl {
-        match self.impl_item.inner {
-            clean::ImplItem(ref impl_) => impl_,
-            _ => panic!("non-impl item found in impl")
-        }
-    }
-
-    pub fn trait_did(&self) -> Option<DefId> {
-        self.inner_impl().trait_.def_id()
     }
 }
 
@@ -2131,108 +2113,79 @@ fn stability_tags(item: &clean::Item) -> String {
     tags
 }
 
+fn show_note(note: &Option<String>, cx: &Context) -> String {
+    if let Some(note) = note {
+        let mut ids = cx.id_map.borrow_mut();
+        let html = MarkdownHtml(
+            &note, &mut ids, cx.shared.codes, cx.shared.edition, &cx.shared.playground);
+        format!(": {}", html.to_string())
+    } else {
+        String::new()
+    }
+}
+
+fn show_unstable(msg: &str, class: &str, ui: UnstabilityInfo, cx: &Context) -> String {
+    let mut msg = msg.to_owned();
+    if let Some(feature) = ui.feature {
+        let mut feature = format!("<code>{}</code>", Escape(&feature));
+        if let (Some(url), Some(issue)) = (&cx.shared.issue_tracker_base_url, ui.issue_number) {
+            feature.push_str(&format!(
+                "&nbsp;<a href=\"{url}{issue}\">#{issue}</a>",
+                url = url,
+                issue = issue
+            ));
+        }
+
+        msg.push_str(&format!(" ({})", feature));
+    }
+    if let Some(unstable_reason) = ui.unstable_reason {
+        let mut ids = cx.id_map.borrow_mut();
+        msg = format!(
+            "<details><summary>{}</summary>{}</details>",
+            message,
+            MarkdownHtml(
+                &unstable_reason,
+                &mut ids,
+                cx.shared.codes,
+                cx.shared.edition,
+                &cx.shared.playground,
+            ).to_string()
+        );
+    }
+    format!("<div class='stab {}'>{}</div>", class, msg)
+}
+
 /// Render the stability and/or deprecation warning that is displayed at the top of the item's
 /// documentation.
 fn short_stability(item: &clean::Item, cx: &Context) -> Vec<String> {
-    let mut stability = vec![];
-    let error_codes = cx.shared.codes;
-
-    if let Some(Deprecation { note, since }) = &item.deprecation() {
-        // We display deprecation messages for #[deprecated] and #[rustc_deprecated]
-        // but only display the future-deprecation messages for #[rustc_deprecated].
-        let mut message = if let Some(since) = since {
-            format!("Deprecated since {}", Escape(since))
-        } else {
-            String::from("Deprecated")
-        };
-        if let Some(ref stab) = item.stability {
-            if let Some(ref depr) = stab.deprecation {
-                if let Some(ref since) = depr.since {
-                    if !stability::deprecation_in_effect(&since) {
-                        message = format!("Deprecating in {}", Escape(&since));
-                    }
+    let deprecated_prep = "<div class='stab deprecated'>";
+    stability::get_stability(item)
+        .into_iter()
+        .map(|s| {
+            match s {
+                StabilityState::Deprecated(note) => {
+                    format!("{}Deprecated{}</div>", deprecated_prep, show_note(note, cx))
+                }
+                StabilityState::DeprecatedSince(since, note) => {
+                    format!("{}Deprecated since {}{}</div>",
+                            deprecated_prep, Escape(&since), show_note(note, cx))
+                }
+                StabilityState::DeprecatingIn(since, note) => {
+                    format!("{}Deprecating in {}{}</div>",
+                            deprecated_prep, Escape(&since), show_note(note, cx))
+                }
+                StabilityState::Internal(ui) => show_unstable(
+                    "<span class='emoji'>⚙️</span> This is an internal compiler API.",
+                    "internal", ui, cx),
+                StabilityState::NightlyOnly(ui) => show_unstable(
+                    "<span class='emoji'>🔬</span> This is a nightly-only experimental API.",
+                    "unstable", ui, cx),
+                Stability::Cfg(cfg) => {
+                    format!("<div class='stab portability'>{}</div>", cfg.render_long_html())
                 }
             }
-        }
-
-        if let Some(note) = note {
-            let mut ids = cx.id_map.borrow_mut();
-            let html = MarkdownHtml(
-                &note, &mut ids, error_codes, cx.shared.edition, &cx.shared.playground);
-            message.push_str(&format!(": {}", html.to_string()));
-        }
-        stability.push(format!("<div class='stab deprecated'>{}</div>", message));
-    }
-
-    if let Some(stab) = item
-        .stability
-        .as_ref()
-        .filter(|stab| stab.level == stability::Unstable)
-    {
-        let is_rustc_private = stab.feature.as_ref().map(|s| &**s) == Some("rustc_private");
-
-        let mut message = if is_rustc_private {
-            "<span class='emoji'>⚙️</span> This is an internal compiler API."
-        } else {
-            "<span class='emoji'>🔬</span> This is a nightly-only experimental API."
-        }
-        .to_owned();
-
-        if let Some(feature) = stab.feature.as_ref() {
-            let mut feature = format!("<code>{}</code>", Escape(&feature));
-            if let (Some(url), Some(issue)) = (&cx.shared.issue_tracker_base_url, stab.issue) {
-                feature.push_str(&format!(
-                    "&nbsp;<a href=\"{url}{issue}\">#{issue}</a>",
-                    url = url,
-                    issue = issue
-                ));
-            }
-
-            message.push_str(&format!(" ({})", feature));
-        }
-
-        if let Some(unstable_reason) = &stab.unstable_reason {
-            // Provide a more informative message than the compiler help.
-            let unstable_reason = if is_rustc_private {
-                "This crate is being loaded from the sysroot, a permanently unstable location \
-                for private compiler dependencies. It is not intended for general use. Prefer \
-                using a public version of this crate from \
-                [crates.io](https://crates.io) via [`Cargo.toml`]\
-                (https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html)."
-            } else {
-                unstable_reason
-            };
-
-            let mut ids = cx.id_map.borrow_mut();
-            message = format!(
-                "<details><summary>{}</summary>{}</details>",
-                message,
-                MarkdownHtml(
-                    &unstable_reason,
-                    &mut ids,
-                    error_codes,
-                    cx.shared.edition,
-                    &cx.shared.playground,
-                ).to_string()
-            );
-        }
-
-        let class = if is_rustc_private {
-            "internal"
-        } else {
-            "unstable"
-        };
-        stability.push(format!("<div class='stab {}'>{}</div>", class, message));
-    }
-
-    if let Some(ref cfg) = item.attrs.cfg {
-        stability.push(format!(
-            "<div class='stab portability'>{}</div>",
-            cfg.render_long_html()
-        ));
-    }
-
-    stability
+        })
+        .collect()
 }
 
 fn item_constant(w: &mut Buffer, cx: &Context, it: &clean::Item, c: &clean::Constant) {
@@ -3117,17 +3070,6 @@ impl<'a> AssocItemLink<'a> {
             ref other => *other,
         }
     }
-}
-
-enum AssocItemRender<'a> {
-    All,
-    DerefFor { trait_: &'a clean::Type, type_: &'a clean::Type, deref_mut_: bool }
-}
-
-#[derive(Copy, Clone, PartialEq)]
-enum RenderMode {
-    Normal,
-    ForDeref { mut_: bool },
 }
 
 fn render_assoc_items(
