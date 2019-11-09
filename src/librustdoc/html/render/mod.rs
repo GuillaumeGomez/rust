@@ -63,8 +63,9 @@ use crate::config::{RenderInfo, RenderOptions};
 use crate::docfs::{DocFS, ErrorStorage, PathError};
 use crate::doctree;
 use crate::error::Error;
+use crate::formats;
 use crate::formats::{AssocItemRender, RenderMode, FormatRenderer, Impl, get_attributes};
-use crate::formats::stability::{self, StabilityState, UnstabilityInfo};
+use crate::formats::stability::{StabilityState, UnstabilityInfo};
 use crate::formats::cache::{cache, Cache,};
 use crate::html::escape::Escape;
 use crate::html::format::{Buffer, PrintWithSpace, print_abi_with_space};
@@ -2113,7 +2114,7 @@ fn stability_tags(item: &clean::Item) -> String {
     tags
 }
 
-fn show_note(note: &Option<String>, cx: &Context) -> String {
+fn show_note(note: Option<String>, cx: &Context) -> String {
     if let Some(note) = note {
         let mut ids = cx.id_map.borrow_mut();
         let html = MarkdownHtml(
@@ -2142,7 +2143,7 @@ fn show_unstable(msg: &str, class: &str, ui: UnstabilityInfo, cx: &Context) -> S
         let mut ids = cx.id_map.borrow_mut();
         msg = format!(
             "<details><summary>{}</summary>{}</details>",
-            message,
+            msg,
             MarkdownHtml(
                 &unstable_reason,
                 &mut ids,
@@ -2159,7 +2160,7 @@ fn show_unstable(msg: &str, class: &str, ui: UnstabilityInfo, cx: &Context) -> S
 /// documentation.
 fn short_stability(item: &clean::Item, cx: &Context) -> Vec<String> {
     let deprecated_prep = "<div class='stab deprecated'>";
-    stability::get_stability(item)
+    formats::stability::get_stability(item)
         .into_iter()
         .map(|s| {
             match s {
@@ -2180,7 +2181,7 @@ fn short_stability(item: &clean::Item, cx: &Context) -> Vec<String> {
                 StabilityState::NightlyOnly(ui) => show_unstable(
                     "<span class='emoji'>🔬</span> This is a nightly-only experimental API.",
                     "unstable", ui, cx),
-                Stability::Cfg(cfg) => {
+                StabilityState::Cfg(cfg) => {
                     format!("<div class='stab portability'>{}</div>", cfg.render_long_html())
                 }
             }

@@ -284,7 +284,6 @@ fn write_with_opt_paren<T: fmt::Display>(
     Ok(())
 }
 
-
 impl<'a> fmt::Display for Html<'a> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self.0 {

@@ -1,6 +1,6 @@
 use rustc::middle::stability;
-use crate::clean;
-
+use crate::clean::{self, Deprecation};
+use crate::clean::cfg::Cfg;
 use std::sync::Arc;
 
 pub struct UnstabilityInfo {
@@ -23,7 +23,7 @@ pub enum StabilityState {
     Cfg(Arc<Cfg>),
 }
 
-fn get_stability(item: &clean::Item) -> Vec<StabilityState> {
+pub fn get_stability(item: &clean::Item) -> Vec<StabilityState> {
     let mut stability = vec![];
 
     if let Some(Deprecation { note, since }) = &item.deprecation() {

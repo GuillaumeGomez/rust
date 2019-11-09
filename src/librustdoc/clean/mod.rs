@@ -1511,6 +1511,13 @@ impl GenericParamDefKind {
         }
     }
 
+    pub fn is_lifetime(&self) -> bool {
+        match *self {
+            GenericParamDefKind::Lifetime => true,
+            _ => false,
+        }
+    }
+
     // FIXME(eddyb) this either returns the default of a type parameter, or the
     // type of a `const` parameter. It seems that the intention is to *visit*
     // any embedded types, but `get_type` seems to be the wrong name for that.

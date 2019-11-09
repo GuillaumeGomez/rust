@@ -2,6 +2,7 @@ use crate::clean;
 use crate::config::{RenderInfo, RenderOptions};
 use crate::error::Error;
 use crate::formats::cache::{Cache, CACHE_KEY};
+use crate::formats::types;
 
 use rustc::util::nodemap::FxHashMap;
 use syntax::symbol::{Symbol, sym};
@@ -147,6 +148,31 @@ impl Renderer {
                     remove_modules(parts, &mut mods, &mut cx)?;
                 }
             } else if item.name.is_some() {
+                match item.inner {
+                    clean::ModuleItem(ref m) => {
+                        // we do nothing
+                    }
+                    // clean::FunctionItem(ref f) | clean::ForeignFunctionItem(ref f) =>
+                    //     item_function(buf, cx, item, f),
+                    // clean::TraitItem(ref t) => item_trait(buf, cx, item, t),
+                    clean::StructItem(ref s) => self.render_struct(&item),
+                    // clean::UnionItem(ref s) => item_union(buf, cx, item, s),
+                    // clean::EnumItem(ref e) => item_enum(buf, cx, item, e),
+                    // clean::TypedefItem(ref t, _) => item_typedef(buf, cx, item, t),
+                    // clean::MacroItem(ref m) => item_macro(buf, cx, item, m),
+                    // clean::ProcMacroItem(ref m) => item_proc_macro(buf, cx, item, m),
+                    // clean::PrimitiveItem(_) => item_primitive(buf, cx, item),
+                    // clean::StaticItem(ref i) | clean::ForeignStaticItem(ref i) =>
+                    //     item_static(buf, cx, item, i),
+                    // clean::ConstantItem(ref c) => item_constant(buf, cx, item, c),
+                    // clean::ForeignTypeItem => item_foreign_type(buf, cx, item),
+                    // clean::KeywordItem(_) => item_keyword(buf, cx, item),
+                    // clean::OpaqueTyItem(ref e, _) => item_opaque_ty(buf, cx, item, e),
+                    // clean::TraitAliasItem(ref ta) => item_trait_alias(buf, cx, item, ta),
+                    _ => {
+                        // We don't generate pages for any other type.
+                    }
+                }
                 cx.item(item, &parent, &cache)?;
                 remove_modules(
                     parent.split("::").filter(|p| !p.is_empty()).collect::<Vec<_>>(),
@@ -158,6 +184,12 @@ impl Renderer {
 
         renderer.after_krate(&krate, &cache)?;
         renderer.after_run(diag)
+    }
+
+    fn render_struct(&self, item: &clean::StructItem) {
+        let name = item.name.as_ref().unwrap().to_string();
+        let attributes = get_attributes(item);
+        let doc = item.doc_value().clone();
     }
 }
 

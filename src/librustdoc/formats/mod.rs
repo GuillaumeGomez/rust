@@ -14,6 +14,7 @@ pub mod cache;
 pub mod item_type;
 pub mod renderer;
 pub mod stability;
+pub mod types;
 
 pub enum AssocItemRender<'a> {
     All,
@@ -24,6 +25,15 @@ pub enum AssocItemRender<'a> {
 pub enum RenderMode {
     Normal,
     ForDeref { mut_: bool },
+}
+
+impl RenderMode {
+    pub fn is_normal(&self) -> bool {
+        match *self {
+            RenderMode::Normal => true,
+            _ => false,
+        }
+    }
 }
 
 /// Metadata about implementations for a type or trait.

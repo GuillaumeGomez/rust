@@ -12,8 +12,7 @@ use crate::error::Error;
 use crate::formats::{AssocItemRender, RenderMode, FormatRenderer, Impl, get_attributes};
 use crate::formats::cache::Cache;
 use crate::formats::item_type::ItemType;
-// TODO: move this type somewhere else
-
+use crate::formats::stability::{self, StabilityState, UnstabilityInfo, get_stability};
 use rustc::util::nodemap::FxHashMap;
 use rustc::hir::def_id::DefId;
 use serialize::json::{ToJson/*, Json, as_json*/};
@@ -243,6 +242,7 @@ impl Context {
         let (non_trait, traits): (Vec<_>, _) = v.iter().partition(|i| {
             i.inner_impl().trait_.is_none()
         });
+        let mut impls = Vec::new();
         if !non_trait.is_empty() {
             let render_mode = match what {
                 AssocItemRender::All => RenderMode::Normal,
@@ -250,12 +250,12 @@ impl Context {
                     RenderMode::ForDeref { mut_: deref_mut_ }
                 }
             };
-            for i in &non_trait {
-                self.render_impl(w, i, render_mode,
-                                 item.stable_since(), true, None, false, true, cache);
-            }
+            impls.extend_from_slice(&non_trait.iter().map(|i| {
+                render_impl(i, render_mode, item.stable_since(), true, None, false, true, cache)
+            }).collect::<Vec<_>>());
         }
         if let AssocItemRender::DerefFor { .. } = what {
+            w.push_str(&impls.join(","));
             return;
         }
         if !traits.is_empty() {
@@ -276,7 +276,7 @@ impl Context {
                 .into_iter()
                 .partition(|t| t.inner_impl().blanket_impl.is_some());
 
-            let mut impls = Buffer::empty_from(&w);
+            let mut impls = String::new();
             render_impls(&mut impls, &concrete, containing_item, cache);
             let impls = impls.into_inner();
             if !impls.is_empty() {
@@ -319,21 +319,21 @@ impl Context {
 }
 
 fn render_impls(
-    w: &mut String,
     traits: &[&&Impl],
     containing_item: &clean::Item,
     cache: &Cache,
-) {
+) -> String {
+    let mut v = Vec::new();
     for i in traits {
         let did = i.trait_did().unwrap();
         render_impl(w, i,
                     RenderMode::Normal, containing_item.stable_since(), true, None, false, true,
                     cache);
     }
+    v.join(",")
 }
 
 fn render_impl(
-    w: &mut String,
     i: &Impl,
     render_mode: RenderMode,
     outer_version: Option<&str>,
@@ -342,7 +342,8 @@ fn render_impl(
     is_on_foreign_type: bool,
     show_default_items: bool,
     cache: &Cache,
-) {
+) -> String {
+    let mut w = String::new();
     if render_mode == RenderMode::Normal {
         if let Some(use_absolute) = use_absolute {
             fmt_impl_for_trait_page(&i.inner_impl(), w, use_absolute);
@@ -483,6 +484,7 @@ fn render_impl(
         }
     }
     w.push_str("</div>");
+    w
 }
 
 // Render md_text as markdown.
@@ -512,7 +514,7 @@ fn document_short(
     } else if !prefix.is_empty() {
         w.push_str(&format!("<div class='docblock{}'>{}</div>",
                             if is_hidden { " hidden" } else { "" },
-                            prefix);
+                            prefix));
     }
 }
 
@@ -520,112 +522,52 @@ fn document_full(w: &mut String, item: &clean::Item, prefix: &str, is_hidden: bo
     if !prefix.is_empty() {
         w.push_str(&format!("<div class='docblock{}'>{}</div>",
                             if is_hidden { " hidden" } else { "" },
-                            prefix);
+                            prefix));
     }
+}
+
+fn internal_nightly_stability(prep: &str, ui: UnstabilityInfo) -> String {
+    let mut s = vec![format!("\"status\":{}", prep)];
+    if let Some(issue_number) = ui.issue_number {
+        s.push(format!("\"issue_number\":{}", issue_number.to_json()));
+    }
+    if let Some(unstable_reason) = ui.unstable_reason {
+        s.push(format!("\"unstable_reason\":{}", unstable_reason.to_json()));
+    }
+    if let Some(feature) = ui.feature {
+        s.push(format!("\"feature\":{}", feature.to_json()));
+    }
+    s.join(",")
 }
 
 fn document_stability(w: &mut String, item: &clean::Item, is_hidden: bool) {
-    let stabilities = short_stability(item);
-    if !stabilities.is_empty() {
-        write!(w, "<div class='stability{}'>", if is_hidden { " hidden" } else { "" });
-        for stability in stabilities {
-            write!(w, "{}", stability);
-        }
-        write!(w, "</div>");
-    }
-}
-
-struct UnstabilityInfo {
-    issue_number: Option<u32>,
-    reason: Option<String>,
-    feature: Option<String>
-}
-
-struct StabilityInfo {
-    state: StabilityState,
-    cfg: Option<Arc<Cfg>>,
-}
-
-enum StabilityState {
-    /// Contains the associated note if any.
-    Deprecated(Option<String>),
-    /// Contains the version number and the associated note if any.
-    DeprecatedSince(String, Option<String>),
-    /// Contains the version number and the associated note if any.
-    DeprecatingIn(String, Option<String>),
-    Internal(UnstabilityInfo),
-    NightlyOnly(UnstabilityInfo),
-}
-
-/// Render the stability and/or deprecation warning that is displayed at the top of the item's
-/// documentation.
-fn short_stability(item: &clean::Item) -> Vec<StabilityInfo> {
-    let mut stability = vec![];
-
-    if let Some(Deprecation { note, since }) = &item.deprecation() {
-        if let Some(ref stab) = item.stability {
-            if let Some(ref depr) = stab.deprecation {
-                if let Some(ref since) = depr.since {
-                    if !stability::deprecation_in_effect(&since) {
-                        stability.push(StabilityInfo {
-                            state: StabilityState::DeprecatingIn(since.clone(), note.clone()),
-                            cfg: item.attrs.cfg.clone(),
-                        });
-                    }
+    let stabilities = get_stability(item);
+    let is_empty = stabilities.is_empty();
+    let stabilities = stabilities
+        .into_iter()
+        .map(|s| {
+            match s {
+                StabilityState::Deprecated(Some(note)) => format!("\"note\":{}", note.to_json()),
+                StabilityState::DeprecatedSince(version, Some(note))
+                | StabilityState::DeprecatingIn(version, Some(note)) => {
+                    format!("\"version\":{},\"note\":{}", version.to_json(), note.to_json())
                 }
+                StabilityState::DeprecatedSince(version, None)
+                | StabilityState::DeprecatingIn(version, None) => {
+                    format!("\"version\":{}", version.to_json())
+                }
+                StabilityState::Internal(ui) => internal_nightly_stability("internal", ui),
+                StabilityState::NightlyOnly(ui) => internal_nightly_stability("nightly-only", ui),
+                // TODO: end this implementation...
+                StabilityState::Cfg(_cfg) => format!("\"cfg\":to be done"),
             }
-        }
-        if stability.is_empty() {
-            stability.push(StabilityInfo {
-                state: if let Some(since) = since {
-                           StabilityState::DeprecatedSince(since.clone(), note.clone())
-                       } else {
-                           StabilityState::Deprecated(note.clone())
-                       },
-                cfg: item.attrs.cfg.clone(),
-            });
-        }
+        })
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(",");
+    if stabilities.is_empty() {
+        w.push_str("\"deprecated\":{}");
+    } else {
+        w.push_str(&format!("\"deprecated\":{{{}}}", stabilities));
     }
-
-    if let Some(stab) = item
-        .stability
-        .as_ref()
-        .filter(|stab| stab.level == stability::Unstable)
-    {
-        let is_rustc_private = stab.feature.as_ref().map(|s| &**s) == Some("rustc_private");
-        let reason = if let Some(unstable_reason) = &stab.unstable_reason {
-            // Provide a more informative message than the compiler help.
-            Some(if is_rustc_private {
-                "This crate is being loaded from the sysroot, a permanently unstable location \
-                for private compiler dependencies. It is not intended for general use. Prefer \
-                using a public version of this crate from \
-                [crates.io](https://crates.io) via [`Cargo.toml`]\
-                (https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html)."
-            } else {
-                unstable_reason
-            }.to_owned())
-        } else {
-            None
-        };
-
-        let unstability_info = UnstabilityInfo {
-            issue_number: stab.issue,
-            reason,
-            feature: stab.feature.clone(),
-        };
-
-        stability.push(if is_rustc_private {
-            StabilityInfo {
-                state: StabilityState::Internal(unstability_info),
-                cfg: item.attrs.cfg.clone(),
-            }
-        } else {
-            StabilityInfo {
-                state: StabilityState::NightlyOnly(unstability_info),
-                cfg: item.attrs.cfg.clone(),
-            }
-        });
-    }
-
-    stability
 }
