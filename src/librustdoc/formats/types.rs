@@ -1,23 +1,34 @@
+use crate::clean;
+use crate::doctree;
 
+use std::fmt;
+
+pub enum StructKind<'a> {
+    Normal {
+        fields: Vec<(&'a clean::Item, &'a clean::Type)>,
+        has_hidden_fields: bool,
+    },
+    Tuple(Vec<(Option<&'a clean::Item>, &'a clean::Type)>),
+    Unit,
+}
 
 impl clean::Struct {
-    /// Returns `None` if called on a unit struct.
-    ///
-    /// Returns the fields as first (they can be `None` if stripped) and the
-    /// second parameter is `true` if there are hidden fields.
-    pub fn get_fields(&self) -> Option<(Vec<Option<StructKind>>, bool)> {
+    pub fn get_fields<'a>(&'a self) -> StructKind<'a> {
         let (struct_kind, has_hidden_fields) = match self.struct_type {
             doctree::Plain => {
-                let fields = item.fields.iter()
+                let fields = self.fields.iter()
                     .filter_map(|field| {
-                        if let clean::StructFieldItem(_) = field.inner {
-                            Some(Some(field.inner.clone()))
+                        if let clean::StructFieldItem(ref ty) = field.inner {
+                            Some((field, ty))
                         } else {
                             None
                         }
                     })
                     .collect::<Vec<_>>();
-                Some((StructKind::Normal(fields), item.has_stripped_fields().unwrap()))
+                StructKind::Normal {
+                    fields,
+                    has_hidden_fields: self.has_stripped_fields().unwrap(),
+                }
             }
             doctree::Tuple => {
                 let mut has_hidden_fields = false;
@@ -29,31 +40,46 @@ impl clean::Struct {
                                 None
                             }
                             clean::StructFieldItem(ref ty) => {
-                                Some(clean::StructFieldItem(ty.clone()))
+                                Some((field, ty))
                             }
                             _ => unreachable!()
                         }
                     })
                     .collect::<Vec<_>>();
-                Some((StructKind::Tuple(fields), has_hidden_fields))
+                StructKind::Tuple {
+                    fields,
+                    has_hidden_fields,
+                }
             }
-            doctree::Unit => {
-                None
-            }
+            doctree::Unit => StructKind::Unit,
         }
     }
 }
 
-pub trait GetImpls {
-    fn get_blanket_impls(&self) -> Vec<Item> {
-        // code in clean/blanket_impl.rs
+impl clean::Union {
+    pub fn get_fields<'a>(&'a self) -> StructKind<'a> {
+        let fields = self.fields.iter()
+            .filter_map(|field| {
+                if let clean::StructFieldItem(ref ty) = field.inner {
+                    Some((field, ty))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        StructKind::Normal {
+            fields,
+            has_hidden_fields: self.has_stripped_fields().unwrap(),
+        }
     }
+}
 
-    fn get_auto_impls(&self) -> Vec<Item> {
-        ;
-    }
-
-    fn get_impls(&self) {
-        ;
+impl fmt::Display for doctree::StructType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", match *self {
+            doctree::StructType::Plain => "plain",
+            doctree::StructType::Tuple => "tuple",
+            doctree::StructType::Unit => "unit",
+        })
     }
 }

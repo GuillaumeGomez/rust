@@ -174,45 +174,43 @@ impl Context {
 
     fn render_struct(&self, w: &mut String, it: &clean::Item, s: &clean::Struct, cache: &Cache) {
         self.render_generics(w, s);
-        match s.struct_type {
-            doctree::Plain => {
-                let f = s.fields.iter()
-                    .filter_map(|f| {
-                        if let clean::StructFieldItem(ref ty) = f.inner {
-                            Some(format!("{{\"name\":{},\"type-name\":{}}}",
-                                f.name.as_ref().unwrap(),
-                                ty.as_str(),
-                            ))
-                        } else {
-                            None
+        write!(w, "\"kind\":{}", format!("{}", s.type_).to_json());
+        match s.get_fields() {
+            formats::types::StructKind::Plain { fields, has_hidden_fields } => {
+                write!(w, ",\"fields\":[{}],\"field_hidden\":{}",
+                    fields.iter().map(|(field, ty)| {
+                        format!("{{\"name\":{},\"type\":{}{}}}",
+                                //field.visibility.print_with_space(),
+                                field.name.as_ref().unwrap().to_json(),
+                                ty.print(),
+                                field.doc.as_ref()
+                                    .map(|d| format!(",\"doc\":{}", d))
+                                    .unwrap_or_else(String::new()))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(","),
+                    has_hidden_fields.to_json(),
+                )
+            }
+            formats::types::StructKind::Tuple(fields) => {
+                write!(w, ",\"fields\":[{}],\"field_hidden\":{}", fields.iter()
+                    .map(|field|) {
+                        match field {
+                            Some((field, ty)) => {
+                                format!("{{\"type\":{}{}}}",
+                                    //field.visibility.print_with_space(),
+                                    ty.print(),
+                                    field.doc.as_ref()
+                                        .map(|d| format!(",\"doc\":{}", d))
+                                        .unwrap_or_else(String::new()))
+                            }
+                            None => "{\"type\":\"_\"}".to_owned(),
                         }
                     })
-                    .collect::<Vec<_>>();
-                w.push_str(
-                    &format!(",\"kind\":\"plain\",\"fields\":{},\"has-hidden-fields\":{}",
-                        f.to_json(),
-                        (!s.fields.is_empty() && f.is_empty()) || it.has_stripped_fields().unwrap(),
-                    ));
+                    .collect::<Vec<_>>()
+                    .join(", "));
             }
-            doctree::Tuple => {
-                let f = s.fields.iter()
-                    .filter_map(|f| {
-                        match f.inner {
-                            clean::StrippedItem(box clean::StructFieldItem(..)) => {
-                                Some("_".to_owned())
-                            }
-                            clean::StructFieldItem(ref ty) => {
-                                Some(ty.as_str())
-                            }
-                            _ => None,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                w.push_str(&format!(",\"kind\":\"tuple\",\"fields\":{}", f.to_json()));
-            }
-            doctree::Unit => {
-                w.push_str(",\"kind\":\"unit\"");
-            }
+            formats::types::StructKind::Unit => {}
         }
     }
 

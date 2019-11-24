@@ -2718,21 +2718,14 @@ fn item_struct(w: &mut Buffer, cx: &Context, it: &clean::Item, s: &clean::Struct
                       it,
                       Some(&s.generics),
                       s.struct_type,
-                      &s.fields,
                       "",
                       true);
         write!(w, "</pre>")
     });
 
     document(w, cx, it);
-    let mut fields = s.fields.iter().filter_map(|f| {
-        match f.inner {
-            clean::StructFieldItem(ref ty) => Some((f, ty)),
-            _ => None,
-        }
-    }).peekable();
-    if let doctree::Plain = s.struct_type {
-        if fields.peek().is_some() {
+    if let StructKind::Normal { fields, has_hidden_fields } = s.get_fields() {
+        if !fields.is_empty() {
             write!(w, "<h2 id='fields' class='fields small-section-header'>
                        Fields{}<a href='#fields' class='anchor'></a></h2>",
                        document_non_exhaustive_header(it));
@@ -2839,7 +2832,6 @@ fn item_enum(w: &mut Buffer, cx: &Context, it: &clean::Item, e: &clean::Enum, ca
                                               v,
                                               None,
                                               s.struct_type,
-                                              &s.fields,
                                               "    ",
                                               false);
                             }
@@ -2954,8 +2946,7 @@ fn render_attributes(w: &mut Buffer, it: &clean::Item, top: bool) {
 
 fn render_struct(w: &mut Buffer, it: &clean::Item,
                  g: Option<&clean::Generics>,
-                 ty: doctree::StructType,
-                 fields: &[clean::Item],
+                 ty: clean::Struct,
                  tab: &str,
                  structhead: bool) {
     write!(w, "{}{}{}",
@@ -2965,59 +2956,49 @@ fn render_struct(w: &mut Buffer, it: &clean::Item,
     if let Some(g) = g {
         write!(w, "{}", g.print())
     }
-    match ty {
-        doctree::Plain => {
+    match ty.get_fields() {
+        formats::types::StructKind::Plain { fields, has_hidden_fields } => {
             if let Some(g) = g {
                 write!(w, "{}", WhereClause { gens: g, indent: 0, end_newline: true })
             }
-            let mut has_visible_fields = false;
             write!(w, " {{");
-            for field in fields {
-                if let clean::StructFieldItem(ref ty) = field.inner {
-                    write!(w, "\n{}    {}{}: {},",
-                           tab,
-                           field.visibility.print_with_space(),
-                           field.name.as_ref().unwrap(),
-                           ty.print());
-                    has_visible_fields = true;
-                }
+            for (field, ty) in fields {
+                write!(w, "\n{}    {}{}: {},",
+                       tab,
+                       field.visibility.print_with_space(),
+                       field.name.as_ref().unwrap(),
+                       ty.print());
             }
-
-            if has_visible_fields {
-                if it.has_stripped_fields().unwrap() {
-                    write!(w, "\n{}    // some fields omitted", tab);
-                }
-                write!(w, "\n{}", tab);
-            } else if it.has_stripped_fields().unwrap() {
+            if fields.is_empty() && has_hidden_fields {
                 // If there are no visible fields we can just display
                 // `{ /* fields omitted */ }` to save space.
                 write!(w, " /* fields omitted */ ");
+            } else if !fields.is_empty() {
+                if has_hidden_fields {
+                    write!(w, "\n{}    // some fields omitted", tab);
+                }
+                write!(w, "\n{}", tab);
             }
             write!(w, "}}");
         }
-        doctree::Tuple => {
-            write!(w, "(");
-            for (i, field) in fields.iter().enumerate() {
-                if i > 0 {
-                    write!(w, ", ");
-                }
-                match field.inner {
-                    clean::StrippedItem(box clean::StructFieldItem(..)) => {
-                        write!(w, "_")
+        formats::types::StructKind::Tuple(fields) => {
+            write!(w, "({})", fields.iter()
+                .map(|field|) {
+                    match field {
+                        Some((field, ty)) => {
+                            format!("{}{}", field.visibility.print_with_space(), ty.print())
+                        }
+                        None => "_".to_owned(),
                     }
-                    clean::StructFieldItem(ref ty) => {
-                        write!(w, "{}{}", field.visibility.print_with_space(), ty.print())
-                    }
-                    _ => unreachable!()
                 }
-            }
-            write!(w, ")");
+                .collect::<Vec<_>>()
+                .join(", "));
             if let Some(g) = g {
                 write!(w, "{}", WhereClause { gens: g, indent: 0, end_newline: false })
             }
             write!(w, ";");
         }
-        doctree::Unit => {
+        formats::types::StructKind::Unit => {
             // Needed for PhantomData.
             if let Some(g) = g {
                 write!(w, "{}", WhereClause { gens: g, indent: 0, end_newline: false })
