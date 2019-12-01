@@ -173,7 +173,10 @@ impl Context {
     }
 
     fn render_struct(&self, w: &mut String, it: &clean::Item, s: &clean::Struct, cache: &Cache) {
-        self.render_generics(w, s);
+        let s = render_generics(s);
+        if !s.is_empty() {
+            w.push_str(format!(",{}", s));
+        }
         write!(w, "\"kind\":{}", format!("{}", s.type_).to_json());
         match s.get_fields() {
             formats::types::StructKind::Plain { fields, has_hidden_fields } => {
@@ -212,17 +215,6 @@ impl Context {
             }
             formats::types::StructKind::Unit => {}
         }
-    }
-
-    fn render_generics<T: clean::GetGenerics>(&self, w: &mut String, it: &T) {
-        let real_params = it.generics().get_params();
-        if real_params.is_empty() {
-            return;
-        }
-        let real_params = real_params.into_iter()
-            .map(|p| p.as_str())
-            .collect::<Vec<String>>();
-        w.push_str(&format!(",\"generics\":{}", real_params.to_json()));
     }
 
     fn render_assoc_items(
@@ -316,19 +308,286 @@ impl Context {
     }
 }
 
+fn render_generics<T: clean::GetGenerics>(it: &T) -> String {
+    let real_params = it.generics().get_params();
+    if real_params.is_empty() {
+        return String::new();
+    }
+    let real_params = real_params.into_iter()
+        .map(|p| p.as_str())
+        .collect::<Vec<String>>();
+    format!("\"generics\":{}", real_params.to_json())
+}
+
 fn render_impls(
     traits: &[&&Impl],
     containing_item: &clean::Item,
     cache: &Cache,
 ) -> String {
-    let mut v = Vec::new();
-    for i in traits {
-        let did = i.trait_did().unwrap();
-        render_impl(w, i,
-                    RenderMode::Normal, containing_item.stable_since(), true, None, false, true,
-                    cache);
+    traits.iter()
+        .map(|i| {
+            let did = i.trait_did().unwrap();
+            render_impl(w, i,
+                        RenderMode::Normal, containing_item.stable_since(), true, None, false, true,
+                        cache)
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn resolved_path(did: DefId, path: &clean::Path, print_all: bool) -> String {
+    let last = path.segments.last().unwrap();
+    let mut s = String::new();
+
+    if print_all {
+        for seg in &path.segments[..path.segments.len() - 1] {
+            s.push_str(format!("{}::", seg.name));
+        }
     }
-    v.join(",")
+    format!("{}{}{}", s, last.name, last.args.print())
+}
+
+fn tybounds(param_names: &Option<Vec<clean::GenericBound>>) -> String {
+    match *param_names {
+        Some(ref params) => {
+            params.iter().map(|param| format!(" + {}", param.print())).collect::<String>()
+        }
+        None => String::new(),
+    }
+}
+
+fn print_abi_with_space(abi: Abi) -> String {
+    match abi {
+        Abi::Rust => String::new(),
+        abi => format!("extern \"{}\" ", abi.name()),
+    }
+}
+
+fn fmt_type(t: &clean::Type, use_absolute: bool) -> String {
+    match *t {
+        clean::Generic(ref name) => format!("{}", name),
+        clean::ResolvedPath{ did, ref param_names, ref path, is_generic } => {
+            format!("{}{}{}",
+                if param_names.is_some() { "dyn " } else { "" },
+                resolved_path(did, path, is_generic),
+                tybounds(param_names))
+        }
+        clean::Infer => "_".to_owned(),
+        clean::Primitive(prim) => prim.as_str().to_owned(),
+        clean::BareFunction(ref decl) => {
+            format!("{}{}fn{}{}",
+                decl.unsafety.print_with_space(),
+                print_abi_with_space(decl.abi),
+                decl.print_generic_params(),
+                decl.decl.print())
+        }
+        clean::Tuple(ref typs) => {
+            match &typs[..] {
+                &[] => primitive_link(f, PrimitiveType::Unit, "()"),
+                &[ref one] => {
+                    primitive_link(f, PrimitiveType::Tuple, "(")?;
+                    // Carry `f.alternate()` into this display w/o branching manually.
+                    fmt::Display::fmt(&one.print(), f)?;
+                    primitive_link(f, PrimitiveType::Tuple, ",)")
+                }
+                many => {
+                    primitive_link(f, PrimitiveType::Tuple, "(")?;
+                    for (i, item) in many.iter().enumerate() {
+                        if i != 0 { write!(f, ", ")?; }
+                        fmt::Display::fmt(&item.print(), f)?;
+                    }
+                    primitive_link(f, PrimitiveType::Tuple, ")")
+                }
+            }
+        }
+        clean::Slice(ref t) => {
+            primitive_link(f, PrimitiveType::Slice, "[")?;
+            fmt::Display::fmt(&t.print(), f)?;
+            primitive_link(f, PrimitiveType::Slice, "]")
+        }
+        clean::Array(ref t, ref n) => {
+            primitive_link(f, PrimitiveType::Array, "[")?;
+            fmt::Display::fmt(&t.print(), f)?;
+            primitive_link(f, PrimitiveType::Array, &format!("; {}]", n))
+        }
+        clean::Never => primitive_link(f, PrimitiveType::Never, "!"),
+        clean::RawPointer(m, ref t) => {
+            let m = match m {
+                clean::Immutable => "const",
+                clean::Mutable => "mut",
+            };
+            match **t {
+                clean::Generic(_) | clean::ResolvedPath {is_generic: true, ..} => {
+                    if f.alternate() {
+                        primitive_link(f, clean::PrimitiveType::RawPointer,
+                                       &format!("*{} {:#}", m, t.print()))
+                    } else {
+                        primitive_link(f, clean::PrimitiveType::RawPointer,
+                                       &format!("*{} {}", m, t.print()))
+                    }
+                }
+                _ => {
+                    primitive_link(f, clean::PrimitiveType::RawPointer, &format!("*{} ", m))?;
+                    fmt::Display::fmt(&t.print(), f)
+                }
+            }
+        }
+        clean::BorrowedRef{ lifetime: ref l, mutability, type_: ref ty} => {
+            let lt = match l {
+                Some(l) => format!("{} ", l.print()),
+                _ => String::new()
+            };
+            let m = mutability.print_with_space();
+            let amp = if f.alternate() {
+                "&".to_string()
+            } else {
+                "&amp;".to_string()
+            };
+            match **ty {
+                clean::Slice(ref bt) => { // `BorrowedRef{ ... Slice(T) }` is `&[T]`
+                    match **bt {
+                        clean::Generic(_) => {
+                            if f.alternate() {
+                                primitive_link(f, PrimitiveType::Slice,
+                                    &format!("{}{}{}[{:#}]", amp, lt, m, bt.print()))
+                            } else {
+                                primitive_link(f, PrimitiveType::Slice,
+                                    &format!("{}{}{}[{}]", amp, lt, m, bt.print()))
+                            }
+                        }
+                        _ => {
+                            primitive_link(f, PrimitiveType::Slice,
+                                           &format!("{}{}{}[", amp, lt, m))?;
+                            if f.alternate() {
+                                write!(f, "{:#}", bt.print())?;
+                            } else {
+                                write!(f, "{}", bt.print())?;
+                            }
+                            primitive_link(f, PrimitiveType::Slice, "]")
+                        }
+                    }
+                }
+                clean::ResolvedPath { param_names: Some(ref v), .. } if !v.is_empty() => {
+                    write!(f, "{}{}{}(", amp, lt, m)?;
+                    fmt_type(&ty, f, use_absolute)?;
+                    write!(f, ")")
+                }
+                clean::Generic(..) => {
+                    primitive_link(f, PrimitiveType::Reference,
+                                   &format!("{}{}{}", amp, lt, m))?;
+                    fmt_type(&ty, f, use_absolute)
+                }
+                _ => {
+                    write!(f, "{}{}{}", amp, lt, m)?;
+                    fmt_type(&ty, f, use_absolute)
+                }
+            }
+        }
+        clean::ImplTrait(ref bounds) => {
+            if f.alternate() {
+                write!(f, "impl {:#}", print_generic_bounds(bounds))
+            } else {
+                write!(f, "impl {}", print_generic_bounds(bounds))
+            }
+        }
+        clean::QPath { ref name, ref self_type, ref trait_ } => {
+            let should_show_cast = match *trait_ {
+                box clean::ResolvedPath { ref path, .. } => {
+                    !path.segments.is_empty() && !self_type.is_self_type()
+                }
+                _ => true,
+            };
+            if f.alternate() {
+                if should_show_cast {
+                    write!(f, "<{:#} as {:#}>::", self_type.print(), trait_.print())?
+                } else {
+                    write!(f, "{:#}::", self_type.print())?
+                }
+            } else {
+                if should_show_cast {
+                    write!(f, "&lt;{} as {}&gt;::", self_type.print(), trait_.print())?
+                } else {
+                    write!(f, "{}::", self_type.print())?
+                }
+            };
+            match *trait_ {
+                // It's pretty unsightly to look at `<A as B>::C` in output, and
+                // we've got hyperlinking on our side, so try to avoid longer
+                // notation as much as possible by making `C` a hyperlink to trait
+                // `B` to disambiguate.
+                //
+                // FIXME: this is still a lossy conversion and there should probably
+                //        be a better way of representing this in general? Most of
+                //        the ugliness comes from inlining across crates where
+                //        everything comes in as a fully resolved QPath (hard to
+                //        look at).
+                box clean::ResolvedPath { did, ref param_names, .. } => {
+                    match href(did) {
+                        Some((ref url, _, ref path)) if !f.alternate() => {
+                            write!(f,
+                                   "<a class=\"type\" href=\"{url}#{shortty}.{name}\" \
+                                   title=\"type {path}::{name}\">{name}</a>",
+                                   url = url,
+                                   shortty = ItemType::AssocType,
+                                   name = name,
+                                   path = path.join("::"))?;
+                        }
+                        _ => write!(f, "{}", name)?,
+                    }
+
+                    // FIXME: `param_names` are not rendered, and this seems bad?
+                    drop(param_names);
+                    Ok(())
+                }
+                _ => {
+                    write!(f, "{}", name)
+                }
+            }
+        }
+    }
+}
+
+fn assoc_const(
+   it: &clean::Item,
+   ty: &clean::Type,
+   _default: Option<&String>,
+) -> String {
+    format!("{}const {}: {}",
+        it.visibility.print_with_space(),
+        it.name.as_ref().unwrap(),
+        ty.print())
+}
+
+fn assoc_type(
+    it: &clean::Item,
+    bounds: &[clean::GenericBound],
+    default: Option<&clean::Type>,
+) -> String {
+    format!("type {}{}{}",
+        it.name.as_ref().unwrap(),
+        if !bounds.is_empty() {
+            format!(": {}", print_generic_bounds(bounds))
+        } else {
+            String::new()
+        },
+        if let Some(default) = default {
+            format!(" = {}", default.print())
+        } else {
+            String::new()
+        })
+}
+
+fn render_stability_since_raw(ver: Option<&str>, containing_ver: Option<&str>) -> String {
+    if let Some(v) = ver {
+        if containing_ver != ver && v.len() > 0 {
+            return format!("\"stable_since\":\"{}\"", ver);
+        }
+    }
+    String::new()
+}
+
+fn render_stability_since(item: &clean::Item, containing_item: &clean::Item) -> String {
+    render_stability_since_raw(item.stable_since(), containing_item.stable_since())
 }
 
 fn render_impl(
@@ -341,27 +600,40 @@ fn render_impl(
     show_default_items: bool,
     cache: &Cache,
 ) -> String {
-    let mut w = String::new();
+    let mut w = "\"impl\":{".to_owned();
     if render_mode == RenderMode::Normal {
         if let Some(use_absolute) = use_absolute {
-            fmt_impl_for_trait_page(&i.inner_impl(), w, use_absolute);
+            let mut s = vec![render_generics(i)];
+            let inner = i.inner_impl();
+            if let Some(ref ty) = inner.trait_ {
+                s.push(format!("\"trait\":\"{}{}\"",
+                    if inner.polarity == Some(clean::ImplPolarity::Negative) { "!" } else { "" },
+                    match ty {
+                        clean::ResolvedPath { param_names: None, path, is_generic: false, .. } => {
+                            format!("{}{}", path.segments.last().unwrap().name, last.args.print())
+                        }
+                        _ => unreachable!(),
+                    }));
+            }
             if show_def_docs {
-                for it in &i.inner_impl().items {
-                    if let clean::TypedefItem(ref tydef, _) = it.inner {
-                        assoc_type(w, it, &vec![], Some(&tydef.type_), "");
-                    }
-                }
+                s.push(format!("\"items\":[{}]",
+                    i.inner_impl().items.iter()
+                        .filter_map(|it| {
+                            if let clean::TypedefItem(ref tydef, _) = it.inner {
+                                Some(assoc_type(w, it, &vec![], Some(&tydef.type_), ""))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",")));
             }
         }
-        let since = i.impl_item.stability.as_ref().map(|s| &s.since[..]);
-        render_stability_since_raw(w, since, outer_version);
+        s.push(render_stability_since_raw(w, since, outer_version));
         if let Some(ref dox) = cx.shared.maybe_collapsed_doc_value(&i.impl_item) {
-            let mut ids = cx.id_map.borrow_mut();
-            w.push_str(&format!("<div class='docblock'>{}</div>",
-                                Markdown(&*dox, &i.impl_item.links(), &mut ids,
-                                         cx.shared.codes.shared.edition,
-                                         &cx.shared.playground).to_string()));
+            s.push(format!("\"doc\":{}", dox.to_json()));
         }
+        w.push(s.into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(","));
     }
 
     fn doc_impl_item(w: &mut String, item: &clean::Item,
