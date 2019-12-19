@@ -245,6 +245,7 @@ pub fn run_core(options: RustdocOptions) -> (clean::Crate, RenderInfo, RenderOpt
         mut manual_passes,
         display_warnings,
         render_options,
+        should_test,
         ..
     } = options;
 
@@ -254,6 +255,11 @@ pub fn run_core(options: RustdocOptions) -> (clean::Crate, RenderInfo, RenderOpt
 
     // Add the doc cfg into the doc build.
     cfgs.push("doc".to_string());
+    eprintln!("1");
+    if should_test {
+        eprintln!("2");
+        cfgs.push("doctest".to_owned());
+    }
 
     let cpath = Some(input.clone());
     let input = Input::File(input);

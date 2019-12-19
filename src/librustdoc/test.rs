@@ -161,7 +161,6 @@ fn scrape_test_config(krate: &::rustc::hir::Crate) -> TestOptions {
             }
         }
     }
-
     opts
 }
 
