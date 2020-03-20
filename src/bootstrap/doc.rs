@@ -313,6 +313,9 @@ impl Step for Standalone {
             }
 
             let mut cmd = builder.rustdoc_cmd(compiler);
+            // Needed for --index-page flag
+            cmd.arg("-Z").arg("unstable-options");
+
             cmd.arg("--html-after-content")
                 .arg(&footer)
                 .arg("--html-before-content")
