@@ -398,7 +398,7 @@ impl Step for Std {
 
             // Keep a whitelist so we do not build internal stdlib crates, these will be
             // build by the rustc step later if enabled.
-            cargo.arg("-Z").arg("unstable-options").arg("-p").arg(package);
+            cargo.arg("-p").arg(package);
             // Create all crate output directories first to make sure rustdoc uses
             // relative links.
             // FIXME: Cargo should probably do this itself.
@@ -409,6 +409,8 @@ impl Step for Std {
                 .arg("rust.css")
                 .arg("--markdown-no-toc")
                 .arg("--generate-redirect-pages")
+                .arg("-Z")
+                .arg("unstable-options")
                 .arg("--resource-suffix")
                 .arg(crate::channel::CFG_RELEASE_NUM)
                 .arg("--index-page")
