@@ -10,7 +10,7 @@ use rustc_ast::{self as ast, Attribute, NodeId, PatKind};
 use rustc_attr::{self as attr, Deprecation, HasAttrs, Stability};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::sync::{self, Lrc};
-use rustc_errors::{DiagnosticBuilder, ErrorReported};
+use rustc_errors::{DiagnosticBuilder, DiagnosticId, ErrorReported};
 use rustc_parse::{self, nt_to_tokenstream, parser, MACRO_ARGUMENTS};
 use rustc_session::{parse::ParseSess, Limit, Session};
 use rustc_span::def_id::{DefId, LOCAL_CRATE};
@@ -1030,6 +1030,15 @@ impl<'a> ExtCtxt<'a> {
 
     pub fn struct_span_err<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> DiagnosticBuilder<'a> {
         self.sess.parse_sess.span_diagnostic.struct_span_err(sp, msg)
+    }
+
+    pub fn struct_span_err_with_code<S: Into<MultiSpan>>(
+        &self,
+        sp: S,
+        msg: &str,
+        code: DiagnosticId,
+    ) -> DiagnosticBuilder<'a> {
+        self.sess.parse_sess.span_diagnostic.struct_span_err_with_code(sp, msg, code)
     }
 
     /// Emit `msg` attached to `sp`, without immediately stopping

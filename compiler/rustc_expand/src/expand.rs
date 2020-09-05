@@ -18,7 +18,7 @@ use rustc_ast_pretty::pprust;
 use rustc_attr::{self as attr, is_builtin_attr, HasAttrs};
 use rustc_data_structures::map_in_place::MapInPlace;
 use rustc_data_structures::stack::ensure_sufficient_stack;
-use rustc_errors::{Applicability, PResult};
+use rustc_errors::{Applicability, DiagnosticId, PResult};
 use rustc_feature::Features;
 use rustc_parse::parser::Parser;
 use rustc_parse::validate_attr;
@@ -529,9 +529,11 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
     fn error_derive_forbidden_on_non_adt(&self, derives: &[Path], item: &Annotatable) {
         let attr = self.cx.sess.find_by_name(item.attrs(), sym::derive);
         let span = attr.map_or(item.span(), |attr| attr.span);
-        let mut err = self
-            .cx
-            .struct_span_err(span, "`derive` may only be applied to structs, enums and unions");
+        let mut err = self.cx.struct_span_err_with_code(
+            span,
+            "`derive` may only be applied to structs, enums and unions",
+            DiagnosticId::Error("E0773".into()),
+        );
         if let Some(ast::Attribute { style: ast::AttrStyle::Inner, .. }) = attr {
             let trait_list = derives.iter().map(|t| pprust::path_to_string(t)).collect::<Vec<_>>();
             let suggestion = format!("#[derive({})]", trait_list.join(", "));
