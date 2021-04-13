@@ -604,6 +604,13 @@ fn opts() -> Vec<RustcOptGroup> {
         unstable("show-type-layout", |o| {
             o.optflagmulti("", "show-type-layout", "Include the memory layout of types in the docs")
         }),
+        unstable("generate-link-to-definition", |o| {
+            o.optflag(
+                "",
+                "generate-link-to-definition",
+                "Generate URLs to definition in the HTML source code pages",
+            )
+        }),
     ]
 }
 
