@@ -706,6 +706,7 @@ fn main_options(options: config::Options) -> MainResult {
     // FIXME: fix this clone (especially render_options)
     let manual_passes = options.manual_passes.clone();
     let render_options = options.render_options.clone();
+    let crate_name = options.crate_name.clone().unwrap_or_else(String::new);
     let config = core::create_config(options);
 
     interface::create_compiler_and_run(config, |compiler| {
@@ -721,7 +722,7 @@ fn main_options(options: config::Options) -> MainResult {
             // We need to hold on to the complete resolver, so we cause everything to be
             // cloned for the analysis passes to use. Suboptimal, but necessary in the
             // current architecture.
-            let resolver = core::create_resolver(queries, &sess);
+            let resolver = core::create_resolver(queries, &sess, crate_name);
 
             if sess.has_errors() {
                 sess.fatal("Compilation failed, aborting rustdoc");

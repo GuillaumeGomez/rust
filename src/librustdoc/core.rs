@@ -301,13 +301,35 @@ crate fn create_config(
 crate fn create_resolver<'a>(
     queries: &Queries<'a>,
     sess: &Session,
+    crate_name: String,
 ) -> Rc<RefCell<interface::BoxedResolver>> {
     let parts = abort_on_err(queries.expansion(), sess).peek();
     let (krate, resolver, _) = &*parts;
+    let krate = krate.clone();
     let resolver = resolver.borrow().clone();
 
+    let krate = resolver.borrow_mut().access(move |resolver| {
+        let features = sess.features_untracked();
+        let cfg = rustc_expand::expand::ExpansionConfig {
+            features: Some(&features),
+            recursion_limit: sess.recursion_limit(),
+            trace_mac: sess.opts.debugging_opts.trace_macros,
+            should_test: sess.opts.test,
+            span_debug: sess.opts.debugging_opts.span_debug,
+            proc_macro_backtrace: sess.opts.debugging_opts.proc_macro_backtrace,
+            ..rustc_expand::expand::ExpansionConfig::default(crate_name.to_string())
+        };
+
+        let extern_mod_loaded = |_, attrs, items, span| {
+            let krate = ast::Crate { attrs, items, span, proc_macros: vec![] };
+            (krate.attrs, krate.items)
+        };
+        let mut ecx = rustc_expand::base::ExtCtxt::new(&sess, cfg, resolver, Some(&extern_mod_loaded));
+        sess.time("expand_crate", || ecx.monotonic_expander().expand_crate(krate))
+    });
+
     let mut loader = crate::passes::collect_intra_doc_links::IntraLinkCrateLoader::new(resolver);
-    ast::visit::walk_crate(&mut loader, krate);
+    ast::visit::walk_crate(&mut loader, &krate);
 
     loader.resolver
 }
