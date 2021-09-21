@@ -1,0 +1,24 @@
+// The goal of this test is to check that everything is working as expected for the "jump
+// to definition feature".
+goto: file://|DOC_PATH|/src/link_to_definition/lib.rs.html
+
+// At this point, no "element information" popup should have been created yet.
+assert-count: ("body.source .example-wrap pre.rust a.contain-info", 0)
+move-cursor-to: "body.source .example-wrap pre.rust a"
+
+// Now there should be one "element information".
+assert-count: ("body.source .example-wrap pre.rust a.contain-info", 1)
+// And it contains at least one link.
+assert: (".link-info > a")
+// And is currently being displayed.
+assert-css: (".link-info", {"display": "block"})
+
+// Checking that the popup disappears when we move away.
+move-cursor-to: (0, 0)
+assert-css: (".link-info", {"display": "none"})
+
+// The click shouldn't follow the link but instead open the popup!
+click: "body.source .example-wrap pre.rust a"
+assert-css: (".link-info", {"display": "block"})
+move-cursor-to: (0, 0)
+assert-css: (".link-info", {"display": "block"})

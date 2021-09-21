@@ -1,0 +1,11 @@
+// The goal of this test is to check that everything is working as expected for the "jump
+// to definition feature" when javascript is disabled.
+javascript: false
+goto: file://|DOC_PATH|/src/link_to_definition/lib.rs.html
+
+// Check that click on item leads to the expected page.
+click: "//a[text()='tadam::Foo']"
+// There isn't any link on the new page:
+assert-count: ("body.source .example-wrap pre.rust a", 0)
+// Checking just in case that we are on a source code page:
+assert: ("body.source .example-wrap pre.rust")
