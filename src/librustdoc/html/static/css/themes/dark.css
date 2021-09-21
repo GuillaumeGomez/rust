@@ -28,6 +28,10 @@ pre, .rustdoc.source .example-wrap {
 	background-color: #2A2A2A;
 }
 
+.source.rustdoc a .link-info {
+	background-color: #2A2A2A;
+}
+
 .sidebar {
 	background-color: #505050;
 }
@@ -177,7 +181,7 @@ nav.main .separator {
 a {
 	color: #ddd;
 }
-body.source .example-wrap pre.rust a {
+body.source .example-wrap pre.rust :not(.link-info) > a {
 	background: #333;
 }
 

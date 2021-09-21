@@ -430,6 +430,29 @@ nav.sub {
 	padding-left: 0;
 }
 
+.source.rustdoc a {
+	position: relative;
+}
+
+.source.rustdoc a .link-info {
+	position: absolute;
+	border: 1px solid;
+	display: none;
+	text-align: left;
+	padding: 3px;
+	border-radius: 3px;
+	left: 50%;
+	transform: translateX(-50%);
+}
+
+.source.rustdoc a .link-info a:hover {
+	text-decoration: underline;
+}
+
+.source.rustdoc a:hover .link-info, .source.rustdoc a.clicked .link-info {
+	display: block;
+}
+
 .rustdoc .example-wrap {
 	display: inline-flex;
 	margin-bottom: 10px;
@@ -449,7 +472,7 @@ nav.sub {
 	border-bottom-left-radius: 5px;
 }
 
-.example-wrap > pre.rust a:hover {
+.example-wrap > pre.rust a:not(.contain-info):hover {
 	text-decoration: underline;
 }
 

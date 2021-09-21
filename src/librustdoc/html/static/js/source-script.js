@@ -245,5 +245,66 @@ onEachLazy(document.getElementsByClassName("line-numbers"), function(el) {
 
 highlightSourceLines(true);
 
+(function() {
+    var sourceCode = document.querySelector(".example-wrap pre.rust > code");
+
+    function handleEvent(ev) {
+        var target = ev.target;
+        if (!target || target.tagName !== "A") {
+            return;
+        }
+        var isSourceLink = target.getAttribute("data-src") !== "0";
+        var linkInfo = document.createElement("DIV");
+        linkInfo.className = "link-info";
+        linkInfo.style.bottom = target.offsetHeight + "px";
+        var html = "";
+
+        if (isSourceLink) {
+            var docLink = target.getAttribute("data-doc");
+            if (docLink !== null) {
+                html += "<a href=\"" + docLink + "\">documentation</a><br>";
+            }
+            html += "<a href=\"" + target.href + "\">source</a>";
+        } else {
+            html += "<a href=\"" + target.href + "\">documentation</a>";
+        }
+        linkInfo.innerHTML = html;
+        addClass(target, "contain-info");
+        target.appendChild(linkInfo);
+        target.removeEventListener("mouseenter", handleEvent);
+    }
+
+    function removeClicked(elem) {
+        onEachLazy(elem.getElementsByClassName("clicked"), function(elem) {
+            removeClass(elem, "clicked");
+        });
+    }
+
+    function setupLinkInfoEvents(elem) {
+        // We need to handle click to allow devices without a mouse to have still access to
+        // both links.
+        elem.parentElement.addEventListener("click", function(ev) {
+            var target = ev.target;
+            if (target && target.tagName === "A" && hasClass(target.parentElement, "link-info")) {
+                return;
+            } else if (!target) {
+                removeClicked(elem);
+                return;
+            }
+            ev.preventDefault();
+            var targetHasClicked = hasClass(target, "clicked");
+            removeClicked(elem);
+            if (target.tagName === "A" && !targetHasClicked) {
+                addClass(target, "clicked");
+            }
+        });
+        onEachLazy(elem.getElementsByTagName("a"), function(child) {
+            child.addEventListener("mouseenter", handleEvent);
+        });
+    }
+
+    setupLinkInfoEvents(sourceCode);
+}());
+
 window.createSourceSidebar = createSourceSidebar;
 })();

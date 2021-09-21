@@ -568,7 +568,7 @@ fn string<T: Display>(
         });
     }
     if let Some(context_info) = context_info {
-        if let Some(href) =
+        if let Some((doc_href, src_href)) =
             context_info.context.shared.span_correspondance_map.get(&def_span).and_then(|href| {
                 let context = context_info.context;
                 // FIXME: later on, it'd be nice to provide two links (if possible) for all items:
@@ -576,27 +576,65 @@ fn string<T: Display>(
                 // FIXME: currently, external items only generate a link to their documentation,
                 // a link to their definition can be generated using this:
                 // https://github.com/rust-lang/rust/blob/60f1a2fc4b535ead9c85ce085fdce49b1b097531/src/librustdoc/html/render/context.rs#L315-L338
-                match href {
-                    LinkFromSrc::Local(span) => context
-                        .href_from_span(*span)
-                        .map(|s| format!("{}{}", context_info.root_path, s)),
-                    LinkFromSrc::External(def_id) => {
-                        format::href_with_root_path(*def_id, context, Some(context_info.root_path))
-                            .ok()
-                            .map(|(url, _, _)| url)
+                let (def_id, src_href) = match href {
+                    LinkFromSrc::Local(def_id, span) => {
+                        (def_id.to_def_id(), context_info.context.href_from_span(*span))
                     }
-                    LinkFromSrc::Primitive(prim) => format::href_with_root_path(
-                        PrimitiveType::primitive_locations(context.tcx())[&prim],
-                        context,
-                        Some(context_info.root_path),
-                    )
+                    LinkFromSrc::External(def_id, span) => {
+                        (*def_id, context_info.context.href_from_span(*span))
+                    }
+                    LinkFromSrc::Primitive(prim) => {
+                        (PrimitiveType::primitive_locations(context.tcx())[&prim], None)
+                    }
+                };
+                let src_href = src_href.map(|s| format!("{}{}", context_info.root_path, s));
+                match format::href_with_root_path(def_id, context, Some(context_info.root_path))
                     .ok()
-                    .map(|(url, _, _)| url),
+                    .map(|(url, _, _)| url)
+                {
+                    Some(doc_href) => Some((Some(doc_href), src_href)),
+                    None if src_href.is_some() => Some((None, src_href)),
+                    None => None,
                 }
             })
         {
-            write!(out, "<a class=\"{}\" href=\"{}\">{}</a>", klass.as_html(), href, text_s);
-            return;
+            // By default, the "main" URL is always the source if available.
+            match (doc_href, src_href) {
+                (Some(doc_href), Some(src_href)) => {
+                    write!(
+                        out,
+                        "<a class=\"{}\" href=\"{}\" data-doc=\"{}\">{}</a>",
+                        klass.as_html(),
+                        src_href,
+                        doc_href,
+                        text_s
+                    );
+                    return;
+                }
+                (None, Some(src_href)) => {
+                    write!(
+                        out,
+                        "<a class=\"{}\" href=\"{}\">{}</a>",
+                        klass.as_html(),
+                        src_href,
+                        text_s
+                    );
+                    return;
+                }
+                (Some(doc_href), None) => {
+                    // By default, we assume the URL to be a "source link". In this case it's not,
+                    // so we set `data-src=0` to let the JS know about it.
+                    write!(
+                        out,
+                        "<a class=\"{}\" href=\"{}\" data-src=0>{}</a>",
+                        klass.as_html(),
+                        doc_href,
+                        text_s
+                    );
+                    return;
+                }
+                (None, None) => unreachable!(),
+            }
         }
     }
     write!(out, "<span class=\"{}\">{}</span>", klass.as_html(), text_s);
