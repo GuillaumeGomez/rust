@@ -88,6 +88,7 @@ impl<'tcx> LateLintPass<'tcx> for UnnecessaryWraps {
                 }
             },
             FnKind::Closure => return,
+            FnKind::ForeignFn(_) => return,
         }
 
         // Abort if the method is implementing a trait or of it a trait method.

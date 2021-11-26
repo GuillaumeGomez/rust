@@ -148,6 +148,7 @@ impl<'tcx> LateLintPass<'tcx> for Return {
                     check_block_return(cx, block);
                 }
             },
+            FnKind::ForeignFn(_) => (),
         }
     }
 }

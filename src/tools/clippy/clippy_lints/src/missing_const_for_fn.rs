@@ -130,6 +130,7 @@ impl<'tcx> LateLintPass<'tcx> for MissingConstForFn {
                 }
             },
             FnKind::Closure => return,
+            FnKind::ForeignFn(_) => return,
         }
 
         // Const fns are not allowed as methods in a trait.
