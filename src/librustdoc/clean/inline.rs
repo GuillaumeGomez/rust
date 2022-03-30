@@ -79,7 +79,11 @@ crate fn try_inline(
         Res::Def(DefKind::TyAlias, did) => {
             record_extern_fqn(cx, did, ItemType::Typedef);
             build_impls(cx, Some(parent_module), did, attrs, &mut ret);
-            clean::TypedefItem(build_type_alias(cx, did), false)
+            let t = clean::TypedefItem(build_type_alias(cx, did), false);
+            if std::env::var("LOL").is_ok() {
+                eprintln!("===> {:?}", t);
+            }
+            t
         }
         Res::Def(DefKind::Enum, did) => {
             record_extern_fqn(cx, did, ItemType::Enum);
@@ -271,13 +275,26 @@ fn build_union(cx: &mut DocContext<'_>, did: DefId) -> clean::Union {
 
 fn build_type_alias(cx: &mut DocContext<'_>, did: DefId) -> clean::Typedef {
     let predicates = cx.tcx.explicit_predicates_of(did);
-    let type_ = cx.tcx.type_of(did).clean(cx);
+    // let type_ = cx.tcx.type_of(did).clean(cx);
+    let hir_id = cx.tcx.hir().local_def_id_to_hir_id(did.as_local().expect("yolo"));
+    let type_ = rustc_typeck::hir_ty_to_ty(cx.tcx, hir_ty).clean(cx);
 
     clean::Typedef {
         type_,
         generics: clean_ty_generics(cx, cx.tcx.generics_of(did), predicates),
-        item_type: None,
+        item_type: Some(cx.tcx.type_of(did).clean(cx)),
     }
+
+    //  let rustdoc_ty = hir_ty.clean(cx);
+    // let ty = hir_ty_to_ty(cx.tcx, hir_ty).clean(cx);
+    // TypedefItem(
+    //     Typedef {
+    //         type_: rustdoc_ty,
+    //         generics: generics.clean(cx),
+    //         item_type: Some(ty),
+    //     },
+    //     false,
+    // )
 }
 
 /// Builds all inherent implementations of an ADT (struct/union/enum) or Trait item/path/reexport.
