@@ -16,7 +16,6 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_session::Session;
-use rustc_span::def_id::LOCAL_CRATE;
 
 use rustdoc_json_types as types;
 
@@ -27,7 +26,7 @@ use crate::docfs::PathError;
 use crate::error::Error;
 use crate::formats::cache::Cache;
 use crate::formats::FormatRenderer;
-use crate::json::conversions::{from_item_id, from_item_id_with_name, IntoWithTcx};
+use crate::json::conversions::{from_item_id, IntoWithTcx};
 use crate::{clean, try_err};
 
 #[derive(Clone)]
@@ -56,7 +55,7 @@ impl<'tcx> JsonRenderer<'tcx> {
                     .map(|i| {
                         let item = &i.impl_item;
                         self.item(item.clone()).unwrap();
-                        from_item_id_with_name(item.item_id, self.tcx, item.name)
+                        from_item_id(item.item_id)
                     })
                     .collect()
             })
@@ -88,7 +87,7 @@ impl<'tcx> JsonRenderer<'tcx> {
 
                         if item.item_id.is_local() || is_primitive_impl {
                             self.item(item.clone()).unwrap();
-                            Some(from_item_id_with_name(item.item_id, self.tcx, item.name))
+                            Some(from_item_id(item.item_id))
                         } else {
                             None
                         }
@@ -107,11 +106,10 @@ impl<'tcx> JsonRenderer<'tcx> {
                 if !id.is_local() {
                     let trait_item = &trait_item.trait_;
                     trait_item.items.clone().into_iter().for_each(|i| self.item(i).unwrap());
-                    let item_id = from_item_id(id.into(), self.tcx);
                     Some((
-                        item_id.clone(),
+                        from_item_id(id.into()),
                         types::Item {
-                            id: item_id,
+                            id: from_item_id(id.into()),
                             crate_id: id.krate.as_u32(),
                             name: self
                                 .cache
@@ -187,7 +185,6 @@ impl<'tcx> FormatRenderer<'tcx> for JsonRenderer<'tcx> {
         // Flatten items that recursively store other items
         item.kind.inner_items().for_each(|i| self.item(i.clone()).unwrap());
 
-        let name = item.name;
         let item_id = item.item_id;
         if let Some(mut new_item) = self.convert_item(item) {
             let can_be_ignored = match new_item.inner {
@@ -228,10 +225,7 @@ impl<'tcx> FormatRenderer<'tcx> for JsonRenderer<'tcx> {
                 | types::ItemEnum::Macro(_)
                 | types::ItemEnum::ProcMacro(_) => false,
             };
-            let removed = self
-                .index
-                .borrow_mut()
-                .insert(from_item_id_with_name(item_id, self.tcx, name), new_item.clone());
+            let removed = self.index.borrow_mut().insert(from_item_id(item_id), new_item.clone());
 
             // FIXME(adotinthevoid): Currently, the index is duplicated. This is a sanity check
             // to make sure the items are unique. The main place this happens is when an item, is
@@ -259,15 +253,13 @@ impl<'tcx> FormatRenderer<'tcx> for JsonRenderer<'tcx> {
             self.get_impls(*primitive);
         }
 
-        let e = ExternalCrate { crate_num: LOCAL_CRATE };
-
         let mut index = (*self.index).clone().into_inner();
         index.extend(self.get_trait_items());
         // This needs to be the default HashMap for compatibility with the public interface for
         // rustdoc-json-types
         #[allow(rustc::default_hash_types)]
         let output = types::Crate {
-            root: types::Id(format!("0:0:{}", e.name(self.tcx).as_u32())),
+            root: types::Id(String::from("0:0")),
             crate_version: self.cache.crate_version.clone(),
             includes_private: self.cache.document_private,
             index: index.into_iter().collect(),
@@ -279,7 +271,7 @@ impl<'tcx> FormatRenderer<'tcx> for JsonRenderer<'tcx> {
                 .chain(self.cache.external_paths.clone().into_iter())
                 .map(|(k, (path, kind))| {
                     (
-                        from_item_id(k.into(), self.tcx),
+                        from_item_id(k.into()),
                         types::ItemSummary {
                             crate_id: k.krate.as_u32(),
                             path: path.iter().map(|s| s.to_string()).collect(),

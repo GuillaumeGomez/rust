@@ -10,7 +10,7 @@ use std::fmt;
 use rustc_ast::ast;
 use rustc_hir::{def::CtorKind, def_id::DefId};
 use rustc_middle::ty::{self, TyCtxt};
-use rustc_span::{Pos, Symbol};
+use rustc_span::Pos;
 use rustc_target::spec::abi::Abi as RustcAbi;
 
 use rustdoc_json_types::*;
@@ -29,9 +29,7 @@ impl JsonRenderer<'_> {
             .get(&item.item_id)
             .into_iter()
             .flatten()
-            .map(|clean::ItemLink { link, did, .. }| {
-                (link.clone(), from_item_id((*did).into(), self.tcx))
-            })
+            .map(|clean::ItemLink { link, did, .. }| (link.clone(), from_item_id((*did).into())))
             .collect();
         let docs = item.attrs.collapsed_doc_value();
         let attrs = item
@@ -56,7 +54,7 @@ impl JsonRenderer<'_> {
             _ => from_clean_item(item, self.tcx),
         };
         Some(Item {
-            id: from_item_id_with_name(item_id, self.tcx, name),
+            id: from_item_id(item_id),
             crate_id: item_id.krate().as_u32(),
             name: name.map(|sym| sym.to_string()),
             span: self.convert_span(span),
@@ -95,7 +93,7 @@ impl JsonRenderer<'_> {
             Inherited => Visibility::Default,
             Restricted(did) if did.is_crate_root() => Visibility::Crate,
             Restricted(did) => Visibility::Restricted {
-                parent: from_item_id(did.into(), self.tcx),
+                parent: from_item_id(did.into()),
                 path: self.tcx.def_path(did).to_string_no_crate_verbose(),
             },
         }
@@ -184,39 +182,22 @@ impl FromWithTcx<clean::TypeBindingKind> for TypeBindingKind {
     }
 }
 
-/// It generates an ID as follows:
-///
-/// `CRATE_ID:ITEM_ID[:NAME_ID]` (if there is no name, NAME_ID is not generated).
-pub(crate) fn from_item_id(item_id: ItemId, tcx: TyCtxt<'_>) -> Id {
-    from_item_id_with_name(item_id, tcx, None)
-}
+pub(crate) fn from_item_id(item_id: ItemId) -> Id {
+    struct DisplayDefId(DefId);
 
-// FIXME: this function (and appending the name at the end of the ID) should be removed when
-// reexports are not inlined anymore for json format. It should be done in #93518.
-pub(crate) fn from_item_id_with_name(item_id: ItemId, tcx: TyCtxt<'_>, name: Option<Symbol>) -> Id {
-    struct DisplayDefId<'a>(DefId, TyCtxt<'a>, Option<Symbol>);
-
-    impl<'a> fmt::Display for DisplayDefId<'a> {
+    impl fmt::Display for DisplayDefId {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let name = match self.2 {
-                Some(name) => format!(":{}", name.as_u32()),
-                None => self
-                    .1
-                    .opt_item_name(self.0)
-                    .map(|n| format!(":{}", n.as_u32()))
-                    .unwrap_or_default(),
-            };
-            write!(f, "{}:{}{}", self.0.krate.as_u32(), u32::from(self.0.index), name)
+            write!(f, "{}:{}", self.0.krate.as_u32(), u32::from(self.0.index))
         }
     }
 
     match item_id {
-        ItemId::DefId(did) => Id(format!("{}", DisplayDefId(did, tcx, name))),
+        ItemId::DefId(did) => Id(format!("{}", DisplayDefId(did))),
         ItemId::Blanket { for_, impl_id } => {
-            Id(format!("b:{}-{}", DisplayDefId(impl_id, tcx, None), DisplayDefId(for_, tcx, name)))
+            Id(format!("b:{}-{}", DisplayDefId(impl_id), DisplayDefId(for_)))
         }
         ItemId::Auto { for_, trait_ } => {
-            Id(format!("a:{}-{}", DisplayDefId(trait_, tcx, None), DisplayDefId(for_, tcx, name)))
+            Id(format!("a:{}-{}", DisplayDefId(trait_), DisplayDefId(for_)))
         }
         ItemId::Primitive(ty, krate) => Id(format!("p:{}:{}", krate.as_u32(), ty.as_sym())),
     }
@@ -296,7 +277,7 @@ impl FromWithTcx<clean::Struct> for Struct {
             struct_type: from_ctor_kind(struct_type),
             generics: generics.into_tcx(tcx),
             fields_stripped,
-            fields: ids(fields, tcx),
+            fields: ids(fields),
             impls: Vec::new(), // Added in JsonRenderer::item
         }
     }
@@ -309,7 +290,7 @@ impl FromWithTcx<clean::Union> for Union {
         Union {
             generics: generics.into_tcx(tcx),
             fields_stripped,
-            fields: ids(fields, tcx),
+            fields: ids(fields),
             impls: Vec::new(), // Added in JsonRenderer::item
         }
     }
@@ -454,7 +435,7 @@ impl FromWithTcx<clean::Type> for Type {
         match ty {
             clean::Type::Path { path } => Type::ResolvedPath {
                 name: path.whole_name(),
-                id: from_item_id(path.def_id().into(), tcx),
+                id: from_item_id(path.def_id().into()),
                 args: path.segments.last().map(|args| Box::new(args.clone().args.into_tcx(tcx))),
                 param_names: Vec::new(),
             },
@@ -463,7 +444,7 @@ impl FromWithTcx<clean::Type> for Type {
 
                 Type::ResolvedPath {
                     name: first_trait.whole_name(),
-                    id: from_item_id(first_trait.def_id().into(), tcx),
+                    id: from_item_id(first_trait.def_id().into()),
                     args: first_trait
                         .segments
                         .last()
@@ -558,7 +539,7 @@ impl FromWithTcx<clean::Trait> for Trait {
         Trait {
             is_auto,
             is_unsafe: unsafety == rustc_hir::Unsafety::Unsafe,
-            items: ids(items, tcx),
+            items: ids(items),
             generics: generics.into_tcx(tcx),
             bounds: bounds.into_iter().map(|x| x.into_tcx(tcx)).collect(),
             implementations: Vec::new(), // Added in JsonRenderer::item
@@ -591,7 +572,7 @@ impl FromWithTcx<clean::Impl> for Impl {
                 .collect(),
             trait_,
             for_: for_.into_tcx(tcx),
-            items: ids(items, tcx),
+            items: ids(items),
             negative: negative_polarity,
             synthetic,
             blanket_impl: blanket_impl.map(|x| x.into_tcx(tcx)),
@@ -634,21 +615,21 @@ impl FromWithTcx<clean::Enum> for Enum {
         Enum {
             generics: generics.into_tcx(tcx),
             variants_stripped,
-            variants: ids(variants, tcx),
+            variants: ids(variants),
             impls: Vec::new(), // Added in JsonRenderer::item
         }
     }
 }
 
 impl FromWithTcx<clean::VariantStruct> for Struct {
-    fn from_tcx(struct_: clean::VariantStruct, tcx: TyCtxt<'_>) -> Self {
+    fn from_tcx(struct_: clean::VariantStruct, _tcx: TyCtxt<'_>) -> Self {
         let fields_stripped = struct_.has_stripped_entries();
         let clean::VariantStruct { struct_type, fields } = struct_;
         Struct {
             struct_type: from_ctor_kind(struct_type),
             generics: Generics { params: vec![], where_predicates: vec![] },
             fields_stripped,
-            fields: ids(fields, tcx),
+            fields: ids(fields),
             impls: Vec::new(),
         }
     }
@@ -671,19 +652,19 @@ impl FromWithTcx<clean::Variant> for Variant {
                     })
                     .collect(),
             ),
-            Struct(s) => Variant::Struct(ids(s.fields, tcx)),
+            Struct(s) => Variant::Struct(ids(s.fields)),
         }
     }
 }
 
 impl FromWithTcx<clean::Import> for Import {
-    fn from_tcx(import: clean::Import, tcx: TyCtxt<'_>) -> Self {
+    fn from_tcx(import: clean::Import, _tcx: TyCtxt<'_>) -> Self {
         use clean::ImportKind::*;
         match import.kind {
             Simple(s) => Import {
                 source: import.source.path.whole_name(),
                 name: s.to_string(),
-                id: import.source.did.map(ItemId::from).map(|i| from_item_id(i, tcx)),
+                id: import.source.did.map(ItemId::from).map(from_item_id),
                 glob: false,
             },
             Glob => Import {
@@ -694,7 +675,7 @@ impl FromWithTcx<clean::Import> for Import {
                     .last_opt()
                     .unwrap_or_else(|| Symbol::intern("*"))
                     .to_string(),
-                id: import.source.did.map(ItemId::from).map(|i| from_item_id(i, tcx)),
+                id: import.source.did.map(ItemId::from).map(from_item_id),
                 glob: true,
             },
         }
@@ -791,6 +772,6 @@ fn ids(items: impl IntoIterator<Item = clean::Item>, tcx: TyCtxt<'_>) -> Vec<Id>
     items
         .into_iter()
         .filter(|x| !x.is_stripped() && !x.is_keyword())
-        .map(|i| from_item_id_with_name(i.item_id, tcx, i.name))
+        .map(|i| from_item_id(i.item_id))
         .collect()
 }
