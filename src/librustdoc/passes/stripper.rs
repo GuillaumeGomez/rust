@@ -46,7 +46,7 @@ impl<'a> DocFolder for Stripper<'a> {
             | clean::MacroItem(..)
             | clean::ForeignTypeItem => {
                 if i.item_id.is_local()
-                    && !self.access_levels.is_exported(i.item_id.expect_def_id())
+                    && !self.access_levels.is_reachable(i.item_id.expect_def_id())
                 {
                     debug!("Stripper: stripping {:?} {:?}", i.type_(), i.name);
                     return None;
