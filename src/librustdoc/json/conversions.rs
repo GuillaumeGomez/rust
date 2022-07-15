@@ -10,7 +10,7 @@ use std::fmt;
 use rustc_ast::ast;
 use rustc_hir::{def::CtorKind, def_id::DefId};
 use rustc_middle::ty::{self, TyCtxt};
-use rustc_span::Pos;
+use rustc_span::{Pos, Symbol};
 use rustc_target::spec::abi::Abi as RustcAbi;
 
 use rustdoc_json_types::*;
@@ -211,7 +211,7 @@ fn from_clean_item(item: clean::Item, tcx: TyCtxt<'_>) -> ItemEnum {
 
     match *item.kind {
         ModuleItem(m) => {
-            ItemEnum::Module(Module { is_crate, items: ids(m.items, tcx), is_stripped: false })
+            ItemEnum::Module(Module { is_crate, items: ids(m.items), is_stripped: false })
         }
         ImportItem(i) => ItemEnum::Import(i.into_tcx(tcx)),
         StructItem(s) => ItemEnum::Struct(s.into_tcx(tcx)),
@@ -255,7 +255,7 @@ fn from_clean_item(item: clean::Item, tcx: TyCtxt<'_>) -> ItemEnum {
             match *inner {
                 ModuleItem(m) => ItemEnum::Module(Module {
                     is_crate,
-                    items: ids(m.items, tcx),
+                    items: ids(m.items),
                     is_stripped: true,
                 }),
                 // `convert_item` early returns `None` for stripped items we're not including
@@ -768,7 +768,7 @@ impl FromWithTcx<ItemType> for ItemKind {
     }
 }
 
-fn ids(items: impl IntoIterator<Item = clean::Item>, tcx: TyCtxt<'_>) -> Vec<Id> {
+fn ids(items: impl IntoIterator<Item = clean::Item>) -> Vec<Id> {
     items
         .into_iter()
         .filter(|x| !x.is_stripped() && !x.is_keyword())
