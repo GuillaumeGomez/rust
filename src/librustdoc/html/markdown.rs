@@ -38,6 +38,7 @@ use std::collections::VecDeque;
 use std::default::Default;
 use std::fmt::Write;
 use std::ops::{ControlFlow, Range};
+use std::path::{Path, PathBuf};
 use std::str;
 
 use crate::clean::RenderedLink;
@@ -46,7 +47,9 @@ use crate::html::escape::Escape;
 use crate::html::format::Buffer;
 use crate::html::highlight;
 use crate::html::length_limit::HtmlWithLimit;
+use crate::html::render::root_path;
 use crate::html::toc::TocBuilder;
+use crate::html::LOCAL_RESOURCES_FOLDER_NAME;
 
 use pulldown_cmark::{
     html, BrokenLink, CodeBlockKind, CowStr, Event, LinkType, Options, Parser, Tag,
@@ -87,7 +90,7 @@ pub enum HeadingOffset {
 
 /// When `to_string` is called, this struct will emit the HTML corresponding to
 /// the rendered version of the contained markdown string.
-pub struct Markdown<'a> {
+pub struct Markdown<'a, P: AsRef<Path>> {
     pub content: &'a str,
     /// A list of link replacements.
     pub links: &'a [RenderedLink],
@@ -101,20 +104,104 @@ pub struct Markdown<'a> {
     /// Offset at which we render headings.
     /// E.g. if `heading_offset: HeadingOffset::H2`, then `# something` renders an `<h2>`.
     pub heading_offset: HeadingOffset,
+    /// Current "depth" from the root module.
+    pub depth: usize,
+    pub resources_to_copy: Option<&'a RefCell<FxHashMap<PathBuf, String>>>,
+    pub resource_suffix: &'a str,
+    pub input_path: Option<P>,
 }
-/// A tuple struct like `Markdown` that renders the markdown with a table of contents.
-pub(crate) struct MarkdownWithToc<'a>(
-    pub(crate) &'a str,
-    pub(crate) &'a mut IdMap,
-    pub(crate) ErrorCodes,
-    pub(crate) Edition,
-    pub(crate) &'a Option<Playground>,
-);
+/// A struct like `Markdown` that renders the markdown with a table of contents.
+pub(crate) struct MarkdownWithToc<'a, P: AsRef<Path>> {
+    pub(crate) content: &'a str,
+    pub(crate) ids: &'a mut IdMap,
+    pub(crate) error_codes: ErrorCodes,
+    pub(crate) edition: Edition,
+    pub(crate) playground: &'a Option<Playground>,
+    /// Current "depth" from the root module.
+    pub(crate) depth: usize,
+    pub(crate) resources_to_copy: Option<&'a RefCell<FxHashMap<PathBuf, String>>>,
+    pub(crate) resource_suffix: &'a str,
+    pub(crate) input_path: Option<P>,
+}
 /// A tuple struct like `Markdown` that renders the markdown escaping HTML tags
 /// and includes no paragraph tags.
 pub(crate) struct MarkdownItemInfo<'a>(pub(crate) &'a str, pub(crate) &'a mut IdMap);
 /// A tuple struct like `Markdown` that renders only the first paragraph.
 pub(crate) struct MarkdownSummaryLine<'a>(pub &'a str, pub &'a [RenderedLink]);
+
+struct LocalResources<'b, I, P> {
+    inner: I,
+    resources_to_copy: Option<&'b RefCell<FxHashMap<PathBuf, String>>>,
+    resource_suffix: &'b str,
+    depth: usize,
+    current_path: Option<P>,
+}
+
+impl<'b, I, P> LocalResources<'b, I, P> {
+    fn new(
+        iter: I,
+        resources_to_copy: Option<&'b RefCell<FxHashMap<PathBuf, String>>>,
+        resource_suffix: &'b str,
+        depth: usize,
+        current_path: Option<P>,
+    ) -> Self {
+        LocalResources { inner: iter, resources_to_copy, resource_suffix, depth, current_path }
+    }
+}
+
+impl<'a, 'b, I: Iterator<Item = Event<'a>>, P: AsRef<Path>> Iterator for LocalResources<'b, I, P> {
+    type Item = Event<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let event = self.inner.next()?;
+        // We only modify
+        if let Event::Start(Tag::Image(type_, ref path, ref title)) = event &&
+            !path.starts_with("http://") &&
+            !path.starts_with("https://") &&
+            let Some(current_path) = &self.current_path &&
+            let Some(resources_to_copy) = self.resources_to_copy
+        {
+            let current_path = current_path.as_ref();
+            let path = match current_path.canonicalize().map(|p| p.parent().unwrap().join(&**path)) {
+                Ok(p) => p,
+                Err(_) => {
+                    // FIXME: show an error instead
+                    panic!("failed to generate path from `{}` and from `{path}`", current_path.display());
+                }
+            };
+
+            if !path.is_file() {
+                // FIXME: show an error instead
+                panic!("`{}` is not a file", path.display());
+            }
+
+            let extension = path.extension();
+            let (extension, dot) = match extension.and_then(|e| e.to_str()) {
+                Some(e) => (e, "."),
+                None => ("", ""),
+            };
+
+            let current_nb = resources_to_copy.borrow().len();
+            let file = format!(
+                "{}{LOCAL_RESOURCES_FOLDER_NAME}/{}",
+                root_path(self.depth),
+                resources_to_copy
+                    .borrow_mut()
+                    .entry(path.clone())
+                    .or_insert_with(|| {
+                        format!("{current_nb}{}{dot}{extension}", self.resource_suffix)
+                    }),
+            );
+            Some(Event::Start(Tag::Image(
+                type_,
+                CowStr::Boxed(file.into_boxed_str()),
+                title.clone(),
+            )))
+        } else {
+            Some(event)
+        }
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum ErrorCodes {
@@ -1007,7 +1094,7 @@ impl LangString {
     }
 }
 
-impl Markdown<'_> {
+impl<P: AsRef<Path>> Markdown<'_, P> {
     pub fn into_string(self) -> String {
         let Markdown {
             content: md,
@@ -1017,6 +1104,10 @@ impl Markdown<'_> {
             edition,
             playground,
             heading_offset,
+            resources_to_copy,
+            resource_suffix,
+            depth,
+            input_path,
         } = self;
 
         // This is actually common enough to special-case
@@ -1038,6 +1129,7 @@ impl Markdown<'_> {
         let p = HeadingLinks::new(p, None, ids, heading_offset);
         let p = Footnotes::new(p);
         let p = LinkReplacer::new(p.map(|(ev, _)| ev), links);
+        let p = LocalResources::new(p, resources_to_copy, resource_suffix, depth, input_path);
         let p = TableWrapper::new(p);
         let p = CodeBlocks::new(p, codes, edition, playground);
         html::push_html(&mut s, p);
@@ -1046,21 +1138,38 @@ impl Markdown<'_> {
     }
 }
 
-impl MarkdownWithToc<'_> {
+impl<P: AsRef<Path>> MarkdownWithToc<'_, P> {
     pub(crate) fn into_string(self) -> String {
-        let MarkdownWithToc(md, ids, codes, edition, playground) = self;
+        let MarkdownWithToc {
+            content,
+            ids,
+            error_codes,
+            edition,
+            playground,
+            resources_to_copy,
+            resource_suffix,
+            depth,
+            input_path,
+        } = self;
 
-        let p = Parser::new_ext(md, main_body_opts()).into_offset_iter();
+        let p = Parser::new_ext(content, main_body_opts()).into_offset_iter();
 
-        let mut s = String::with_capacity(md.len() * 3 / 2);
+        let mut s = String::with_capacity(content.len() * 3 / 2);
 
         let mut toc = TocBuilder::new();
 
         {
             let p = HeadingLinks::new(p, Some(&mut toc), ids, HeadingOffset::H1);
             let p = Footnotes::new(p);
-            let p = TableWrapper::new(p.map(|(ev, _)| ev));
-            let p = CodeBlocks::new(p, codes, edition, playground);
+            let p = LocalResources::new(
+                p.map(|(ev, _)| ev),
+                resources_to_copy,
+                resource_suffix,
+                depth,
+                input_path,
+            );
+            let p = TableWrapper::new(p);
+            let p = CodeBlocks::new(p, error_codes, edition, playground);
             html::push_html(&mut s, p);
         }
 

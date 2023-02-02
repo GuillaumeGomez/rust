@@ -127,6 +127,15 @@ pub(crate) struct SharedContext<'tcx> {
     pub(crate) cache: Cache,
 
     pub(crate) call_locations: AllCallLocations,
+
+    /// Local images to move into the static folder.
+    ///
+    /// The tuple contains the hash as first argument and the image original path.
+    pub(crate) resources_to_copy: RefCell<FxHashMap<PathBuf, String>>,
+}
+
+pub(crate) fn root_path(depth: usize) -> String {
+    "../".repeat(depth)
 }
 
 impl SharedContext<'_> {
@@ -165,7 +174,7 @@ impl<'tcx> Context<'tcx> {
     /// String representation of how to get back to the root path of the 'doc/'
     /// folder in terms of a relative URL.
     pub(super) fn root_path(&self) -> String {
-        "../".repeat(self.current.len())
+        root_path(self.current.len())
     }
 
     fn render_item(&mut self, it: &clean::Item, is_module: bool) -> String {
@@ -290,6 +299,13 @@ impl<'tcx> Context<'tcx> {
             ModuleSorting::DeclarationOrder => {}
         }
         map
+    }
+
+    pub(crate) fn span_file_path(&self, item: &clean::Item) -> Option<PathBuf> {
+        item.span(self.tcx()).and_then(|span| match span.filename(self.sess()) {
+            FileName::Real(ref path) => Some(path.local_path_if_available().into()),
+            _ => None,
+        })
     }
 
     /// Generates a url appropriate for an `href` attribute back to the source of
@@ -532,6 +548,7 @@ impl<'tcx> FormatRenderer<'tcx> for Context<'tcx> {
             span_correspondance_map: matches,
             cache,
             call_locations,
+            resources_to_copy: RefCell::new(FxHashMap::default()),
         };
 
         let dst = output;
@@ -712,6 +729,19 @@ impl<'tcx> FormatRenderer<'tcx> for Context<'tcx> {
                 let paths = serde_json::to_string(&*redirections.borrow()).unwrap();
                 shared.ensure_dir(&self.dst.join(crate_name.as_str()))?;
                 shared.fs.write(redirect_map_path, paths)?;
+            }
+        }
+
+        {
+            // Copying the local resources to the destination folder.
+            let resources = shared.resources_to_copy.borrow();
+            if !resources.is_empty() {
+                let dst = self.dst.join(crate::html::LOCAL_RESOURCES_FOLDER_NAME);
+                shared.ensure_dir(&dst)?;
+                for (original_path, dest_name) in resources.iter() {
+                    let dst = dst.join(dest_name);
+                    try_err!(std::fs::copy(original_path, &dst), &dst);
+                }
             }
         }
 

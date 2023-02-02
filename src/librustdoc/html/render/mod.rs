@@ -404,7 +404,11 @@ fn scrape_examples_help(shared: &SharedContext<'_>) -> String {
             error_codes: shared.codes,
             edition: shared.edition(),
             playground: &shared.playground,
-            heading_offset: HeadingOffset::H1
+            heading_offset: HeadingOffset::H1,
+            depth: 0,
+            resources_to_copy: None,
+            resource_suffix: &shared.resource_suffix,
+            input_path: None::<PathBuf>,
         }
         .into_string()
     )
@@ -435,7 +439,9 @@ fn render_markdown(
     md_text: &str,
     links: Vec<RenderedLink>,
     heading_offset: HeadingOffset,
+    item: &clean::Item,
 ) {
+    let input_path = cx.span_file_path(item);
     write!(
         w,
         "<div class=\"docblock\">{}</div>",
@@ -447,6 +453,10 @@ fn render_markdown(
             edition: cx.shared.edition(),
             playground: &cx.shared.playground,
             heading_offset,
+            depth: cx.current.len(),
+            resources_to_copy: Some(&cx.shared.resources_to_copy),
+            resource_suffix: &cx.shared.resource_suffix,
+            input_path,
         }
         .into_string()
     )
@@ -518,10 +528,10 @@ fn document_full_inner(
                      <span>Expand description</span>\
                 </summary>",
             );
-            render_markdown(w, cx, &s, item.links(cx), heading_offset);
+            render_markdown(w, cx, &s, item.links(cx), heading_offset, item);
             w.write_str("</details>");
         } else {
-            render_markdown(w, cx, &s, item.links(cx), heading_offset);
+            render_markdown(w, cx, &s, item.links(cx), heading_offset, item);
         }
     }
 
@@ -1745,6 +1755,7 @@ fn render_impl(
                 </div>",
                 );
             }
+            let input_path = cx.span_file_path(&i.impl_item);
             write!(
                 w,
                 "<div class=\"docblock\">{}</div>",
@@ -1755,7 +1766,11 @@ fn render_impl(
                     error_codes: cx.shared.codes,
                     edition: cx.shared.edition(),
                     playground: &cx.shared.playground,
-                    heading_offset: HeadingOffset::H4
+                    heading_offset: HeadingOffset::H4,
+                    depth: cx.current.len(),
+                    resources_to_copy: Some(&cx.shared.resources_to_copy),
+                    resource_suffix: &cx.shared.resource_suffix,
+                    input_path,
                 }
                 .into_string()
             );

@@ -1,7 +1,7 @@
 use crate::html::markdown::{ErrorCodes, HeadingOffset, IdMap, Markdown, Playground};
 use crate::rustc_span::edition::Edition;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str;
 
 use serde::Serialize;
@@ -47,6 +47,10 @@ impl ExternalHtml {
                 edition,
                 playground,
                 heading_offset: HeadingOffset::H2,
+                depth: 0,
+                resources_to_copy: None,
+                resource_suffix: "",
+                input_path: None::<PathBuf>,
             }
             .into_string()
         );
@@ -63,6 +67,10 @@ impl ExternalHtml {
                 edition,
                 playground,
                 heading_offset: HeadingOffset::H2,
+                depth: 0,
+                resources_to_copy: None,
+                resource_suffix: "",
+                input_path: None::<PathBuf>,
             }
             .into_string()
         );
