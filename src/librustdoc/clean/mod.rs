@@ -51,6 +51,7 @@ pub(crate) use self::utils::{get_auto_trait_and_blanket_impls, krate, register_r
 pub(crate) fn clean_doc_module<'tcx>(doc: &DocModule<'tcx>, cx: &mut DocContext<'tcx>) -> Item {
     let mut items: Vec<Item> = vec![];
     let mut inserted = FxHashSet::default();
+    let mut inserted_imports = FxHashSet::default();
     items.extend(doc.foreigns.iter().map(|(item, renamed)| {
         let item = clean_maybe_renamed_foreign_item(cx, item, *renamed);
         if let Some(name) = item.name && !item.attrs.lists(sym::doc).has_word(sym::hidden) {
@@ -82,12 +83,18 @@ pub(crate) fn clean_doc_module<'tcx>(doc: &DocModule<'tcx>, cx: &mut DocContext<
         if matches!(item.kind, hir::ItemKind::Use(_, hir::UseKind::Glob)) {
             return Vec::new();
         }
-        let v = clean_maybe_renamed_item(cx, item, *renamed, *import_id);
-        for item in &v {
+        let mut v = clean_maybe_renamed_item(cx, item, *renamed, *import_id);
+        v.drain_filter(|item| {
+            if let ItemKind::ImportItem(ref i) = *item.kind &&
+                !inserted_imports.insert((item.item_id, item.name, i.source.did))
+            {
+                return true;
+            }
             if let Some(name) = item.name && !item.attrs.lists(sym::doc).has_word(sym::hidden) {
                 inserted.insert((item.type_(), name));
             }
-        }
+            false
+        });
         v
     }));
     items.extend(doc.items.iter().flat_map(|(item, renamed, _)| {
