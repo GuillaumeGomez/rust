@@ -2071,11 +2071,11 @@ struct OneLevelVisitor<'hir> {
     map: rustc_middle::hir::map::Map<'hir>,
     item: Option<&'hir hir::Item<'hir>>,
     looking_for: Ident,
-    target_def_id: LocalDefId,
+    target_def_id: DefId,
 }
 
 impl<'hir> OneLevelVisitor<'hir> {
-    fn new(map: rustc_middle::hir::map::Map<'hir>, target_def_id: LocalDefId) -> Self {
+    fn new(map: rustc_middle::hir::map::Map<'hir>, target_def_id: DefId) -> Self {
         Self { map, item: None, looking_for: Ident::empty(), target_def_id }
     }
 
@@ -2096,7 +2096,7 @@ impl<'hir> hir::intravisit::Visitor<'hir> for OneLevelVisitor<'hir> {
         if self.item.is_none()
             && item.ident == self.looking_for
             && (matches!(item.kind, hir::ItemKind::Use(_, _))
-                || item.owner_id.def_id == self.target_def_id)
+                || item.owner_id.def_id.to_def_id() == self.target_def_id)
         {
             self.item = Some(item);
         }
@@ -2107,17 +2107,19 @@ impl<'hir> hir::intravisit::Visitor<'hir> for OneLevelVisitor<'hir> {
 /// import one by one. To do so, we go to the parent item and look for the `Ident` into it. Then,
 /// if we found the "end item" (the imported one), we stop there because we don't need its
 /// documentation. Otherwise, we repeat the same operation until we find the "end item".
-fn get_all_import_attributes<'hir>(
+pub(crate) fn get_all_import_attributes<'hir>(
     mut item: &hir::Item<'hir>,
-    tcx: TyCtxt<'hir>,
-    target_def_id: LocalDefId,
+    cx: &mut DocContext<'hir>,
+    target_def_id: DefId,
     attributes: &mut Vec<ast::Attribute>,
     is_inline: bool,
 ) {
+    let tcx = cx.tcx;
     let mut first = true;
     let hir_map = tcx.hir();
     let mut visitor = OneLevelVisitor::new(hir_map, target_def_id);
     let mut visited = FxHashSet::default();
+    eprintln!("2 {:?}", item);
 
     // If the item is an import and has at least a path with two parts, we go into it.
     while let hir::ItemKind::Use(path, _) = item.kind && visited.insert(item.hir_id()) {
@@ -2144,11 +2146,29 @@ fn get_all_import_attributes<'hir>(
             tcx.parent(item.owner_id.def_id.to_def_id())
         };
 
-        let Some(parent) = hir_map.get_if_local(def_id) else { break };
-
         // We get the `Ident` we will be looking for into `item`.
         let looking_for = path.segments[path.segments.len() - 1].ident;
         visitor.reset(looking_for);
+
+        let Some(parent) = hir_map.get_if_local(def_id) else {
+            if matches!(tcx.def_kind(def_id), DefKind::Mod | DefKind::ExternCrate | DefKind::ForeignMod) {
+                for child in tcx.module_children(def_id) {
+                    if child.ident == looking_for &&
+                        let Some(def_id) = child.res.opt_def_id() &&
+                        (matches!(
+                            tcx.def_kind(def_id),
+                            DefKind::Mod | DefKind::ExternCrate | DefKind::ForeignMod
+                        ) || def_id == target_def_id)
+                    {
+                        eprintln!("3 {:?} => {:?}", def_id, tcx.item_attrs(def_id));
+                        eprintln!("3 {:?} => {:?}", def_id, inline::load_attrs(cx, def_id));
+                        add_without_unwanted_attributes(attributes, inline::load_attrs(cx, def_id), is_inline);
+                        break;
+                    }
+                }
+            }
+            break;
+        };
 
         match parent {
             hir::Node::Item(parent_item) => {
@@ -2355,7 +2375,7 @@ fn clean_maybe_renamed_item<'tcx>(
         {
             let is_inline = inline::load_attrs(cx, import_id.to_def_id()).lists(sym::doc).get_word_attr(sym::inline).is_some();
             // Then we get all the various imports' attributes.
-            get_all_import_attributes(use_node, cx.tcx, item.owner_id.def_id, &mut extra_attrs, is_inline);
+            get_all_import_attributes(use_node, cx, item.owner_id.def_id.to_def_id(), &mut extra_attrs, is_inline);
             add_without_unwanted_attributes(&mut extra_attrs, inline::load_attrs(cx, def_id), is_inline);
         } else {
             // We only keep the item's attributes.
@@ -2586,6 +2606,7 @@ fn clean_use_statement_inner<'tcx>(
             // were specifically asked for it
             denied = true;
         }
+        eprintln!("not glob import {denied}");
         if !denied {
             let mut visited = DefIdSet::default();
             let import_def_id = import.owner_id.to_def_id();
@@ -2620,6 +2641,7 @@ fn clean_maybe_renamed_foreign_item<'tcx>(
     renamed: Option<Symbol>,
 ) -> Item {
     let def_id = item.owner_id.to_def_id();
+    eprintln!("1 {:?}", def_id);
     cx.with_param_env(def_id, |cx| {
         let kind = match item.kind {
             hir::ForeignItemKind::Fn(decl, names, generics) => {
@@ -2638,12 +2660,23 @@ fn clean_maybe_renamed_foreign_item<'tcx>(
             hir::ForeignItemKind::Type => ForeignTypeItem,
         };
 
-        Item::from_def_id_and_parts(
-            item.owner_id.def_id.to_def_id(),
+        let attrs = inline::load_attrs(cx, def_id);
+        let cfg = attrs.cfg(cx.tcx, &cx.cache.hidden_cfg);
+
+        Item::from_def_id_and_attrs_and_parts(
+            def_id,
             Some(renamed.unwrap_or(item.ident.name)),
             kind,
-            cx,
+            Box::new(Attributes::from_ast(attrs)),
+            cfg,
         )
+
+        // Item::from_def_id_and_parts(
+        //     item.owner_id.def_id.to_def_id(),
+        //     Some(renamed.unwrap_or(item.ident.name)),
+        //     kind,
+        //     cx,
+        // )
     })
 }
 

@@ -149,7 +149,20 @@ pub(crate) fn try_inline(
         _ => return None,
     };
 
-    let (attrs, cfg) = merge_attrs(cx, Some(parent_module), load_attrs(cx, did), attrs);
+    let (attrs, cfg) = if let Some(import_def_id) = import_def_id &&
+        let Some(import_def_id) = import_def_id.as_local() &&
+        let Some(hir::Node::Item(item)) = cx.tcx.hir().find_by_def_id(import_def_id)
+    {
+        // We try to get as much attributes as possible.
+        let mut attrs = attrs.map(|attrs| attrs.to_vec()).unwrap_or(Vec::new());
+        clean::get_all_import_attributes(&item, cx, did, &mut attrs, true);
+        attrs.extend_from_slice(load_attrs(cx, did));
+        eprintln!("END RESULT XXXX> {:?}", attrs);
+        (Attributes::from_ast(&attrs), attrs.cfg(cx.tcx, &cx.cache.hidden_cfg))
+    } else {
+        merge_attrs(cx, Some(parent_module), load_attrs(cx, did), attrs)
+    };
+
     cx.inlined.insert(did.into());
     let mut item =
         clean::Item::from_def_id_and_attrs_and_parts(did, Some(name), kind, Box::new(attrs), cfg);
