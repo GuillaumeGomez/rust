@@ -2261,9 +2261,7 @@ fn clean_maybe_renamed_item<'tcx>(
                     source: display_macro_source(cx, name, macro_def, def_id, ty_vis),
                 })
             }
-            ItemKind::Macro(_, macro_kind) => {
-                clean_proc_macro(item, &mut name, macro_kind, cx)
-            }
+            ItemKind::Macro(_, macro_kind) => clean_proc_macro(item, &mut name, macro_kind, cx),
             // proc macros can have a name set by attributes
             ItemKind::Fn(ref sig, generics, body_id) => {
                 clean_fn_or_proc_macro(item, sig, generics, body_id, &mut name, cx)
