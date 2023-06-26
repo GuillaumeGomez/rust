@@ -12,6 +12,7 @@ use rustc_span::symbol::{kw, sym, Symbol};
 use std::cell::{RefCell, RefMut};
 use std::cmp::Ordering;
 use std::fmt;
+use std::ops::Deref;
 use std::rc::Rc;
 
 use super::type_layout::document_type_layout;
@@ -611,7 +612,7 @@ fn extra_info_tags<'a, 'tcx: 'a>(
 
         let cfg = match (&item.cfg, parent.cfg.as_ref()) {
             (Some(cfg), Some(parent_cfg)) => cfg.simplify_with(parent_cfg),
-            (cfg, _) => cfg.as_deref().cloned(),
+            (_, parent_cfg) => parent_cfg.as_ref().map(|c| (**c).deref().clone()),
         };
 
         debug!("Portability name={:?} {:?} - {:?} = {:?}", item.name, item.cfg, parent.cfg, cfg);

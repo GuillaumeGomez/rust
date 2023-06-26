@@ -2377,6 +2377,30 @@ fn filter_tokens_from_list(
     tokens
 }
 
+fn filter_doc_attr(normal: &mut ast::NormalAttr) {
+    match normal.item.args {
+        ast::AttrArgs::Delimited(ref mut args) => {
+            let tokens = filter_tokens_from_list(args.tokens.clone(), |token| {
+                !matches!(
+                    token,
+                    TokenTree::Token(
+                        Token {
+                            kind: TokenKind::Ident(
+                                sym::hidden | sym::inline | sym::no_inline | sym::cfg,
+                                _,
+                            ),
+                            ..
+                        },
+                        _,
+                    ),
+                )
+            });
+            args.tokens = TokenStream::new(tokens);
+        }
+        ast::AttrArgs::Empty | ast::AttrArgs::Eq(..) => {}
+    }
+}
+
 /// When inlining items, we merge its attributes (and all the reexports attributes too) with the
 /// final reexport. For example:
 ///
@@ -2418,34 +2442,14 @@ fn add_without_unwanted_attributes<'hir>(
         let mut attr = attr.clone();
         match attr.kind {
             ast::AttrKind::Normal(ref mut normal) => {
-                if let [ident] = &*normal.item.path.segments &&
-                    let ident = ident.ident.name &&
-                    ident == sym::doc
-                {
-                    match normal.item.args {
-                        ast::AttrArgs::Delimited(ref mut args) => {
-                            let tokens =
-                                filter_tokens_from_list(args.tokens.clone(), |token| {
-                                    !matches!(
-                                        token,
-                                        TokenTree::Token(
-                                            Token {
-                                                kind: TokenKind::Ident(
-                                                    sym::hidden | sym::inline | sym::no_inline,
-                                                    _,
-                                                ),
-                                                ..
-                                            },
-                                            _,
-                                        ),
-                                    )
-                                });
-                            args.tokens = TokenStream::new(tokens);
-                            attrs.push((Cow::Owned(attr), import_parent));
-                        }
-                        ast::AttrArgs::Empty | ast::AttrArgs::Eq(..) => {
-                            attrs.push((Cow::Owned(attr), import_parent));
-                        }
+                if let [ident] = &*normal.item.path.segments {
+                    let ident = ident.ident.name;
+                    if ident == sym::doc {
+                        filter_doc_attr(normal);
+                        attrs.push((Cow::Owned(attr), import_parent));
+                    } else if ident != sym::cfg {
+                        // If it's not a `cfg()` attribute, we keep it.
+                        attrs.push((Cow::Owned(attr), import_parent));
                     }
                 }
             }
