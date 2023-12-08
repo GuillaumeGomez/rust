@@ -3,6 +3,7 @@ use rustc_data_structures::graph::iterate::{
     NodeStatus, TriColorDepthFirstSearch, TriColorVisitor,
 };
 use rustc_hir::def::DefKind;
+use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_middle::mir::{self, BasicBlock, BasicBlocks, Body, Terminator, TerminatorKind};
 use rustc_middle::ty::{self, Instance, Ty, TyCtxt};
 use rustc_middle::ty::{GenericArg, GenericArgs};
@@ -27,17 +28,16 @@ fn check_call_recursion<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) {
             _ => &[],
         };
 
-        check_recursion(tcx, body, CallRecursion { trait_args })
+        check_recursion(tcx, body, def_id, CallRecursion { trait_args, original_caller: None })
     }
 }
 
 fn check_recursion<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
+    def_id: LocalDefId,
     classifier: impl TerminatorClassifier<'tcx>,
 ) {
-    let def_id = body.source.def_id().expect_local();
-
     if let DefKind::Fn | DefKind::AssocFn = tcx.def_kind(def_id) {
         let mut vis = Search { tcx, body, classifier, reachable_recursive_calls: vec![] };
         if let Some(NonRecursive) =
@@ -82,7 +82,7 @@ pub fn check_drop_recursion<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) {
             )
             .kind()
         {
-            check_recursion(tcx, body, RecursiveDrop { drop_for: *dropped_ty });
+            check_recursion(tcx, body, body.source.def_id().expect_local(), RecursiveDrop { drop_for: *dropped_ty });
         }
     }
 }
@@ -108,11 +108,26 @@ struct Search<'mir, 'tcx, C: TerminatorClassifier<'tcx>> {
 
 struct CallRecursion<'tcx> {
     trait_args: &'tcx [GenericArg<'tcx>],
+    original_caller: Option<DefId>,
 }
 
 struct RecursiveDrop<'tcx> {
     /// The type that `Drop` is implemented for.
     drop_for: Ty<'tcx>,
+}
+
+fn is_method_of_trait(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    if let DefKind::AssocFn = tcx.def_kind(def_id) {
+        let parent = tcx.parent(def_id);
+        if let DefKind::Impl { of_trait } = tcx.def_kind(parent) {
+            if std::env::var("LOL").is_ok() {
+                eprintln!("====> {def_id:?} => {of_trait:?}", );
+            }
+
+            return of_trait;
+        }
+    }
+    false
 }
 
 impl<'tcx> TerminatorClassifier<'tcx> for CallRecursion<'tcx> {
@@ -138,13 +153,36 @@ impl<'tcx> TerminatorClassifier<'tcx> for CallRecursion<'tcx> {
 
         let func_ty = func.ty(body, tcx);
         if let ty::FnDef(callee, args) = *func_ty.kind() {
+            if std::env::var("LOL").is_ok() {
+                eprintln!("****> {callee:?} == {caller:?}");
+            }
+            let is_trait_method = self.original_caller.is_none() && is_method_of_trait(tcx, caller);
             let normalized_args = tcx.normalize_erasing_regions(param_env, args);
-            let (callee, call_args) = if let Ok(Some(instance)) =
+            let (callee, call_args, has_body) = if let Ok(Some(instance)) =
                 Instance::resolve(tcx, param_env, callee, normalized_args)
             {
-                (instance.def_id(), instance.args)
+                let def_id = instance.def_id();
+                let is_trait_method = is_trait_method && is_method_of_trait(tcx, def_id);
+                if std::env::var("LOL").is_ok() {
+                    eprintln!("+++> {def_id:?} => {:?} // {:?}", tcx.is_mir_available(def_id), !matches!(
+                            instance.def,
+                            ty::InstanceDef::Virtual(..)
+                                | ty::InstanceDef::Intrinsic(..)
+                                | ty::InstanceDef::Item(..)
+                        ));
+                }
+                let has_body = is_trait_method
+                    && (tcx.is_mir_available(def_id)
+                        || !matches!(
+                            instance.def,
+                            ty::InstanceDef::Virtual(..)
+                                | ty::InstanceDef::Intrinsic(..)
+                                | ty::InstanceDef::Item(..)
+                        ));
+                (def_id, instance.args, has_body)
             } else {
-                (callee, normalized_args)
+                let is_trait_method = is_trait_method && is_method_of_trait(tcx, callee);
+                (callee, normalized_args, is_trait_method && tcx.is_mir_available(callee))
             };
 
             // FIXME(#57965): Make this work across function boundaries
@@ -153,7 +191,40 @@ impl<'tcx> TerminatorClassifier<'tcx> for CallRecursion<'tcx> {
             // calling into an entirely different method (for example, a call from the default
             // method in the trait to `<A as Trait<B>>::method`, where `A` and/or `B` are
             // specific types).
-            return callee == caller && &call_args[..self.trait_args.len()] == self.trait_args;
+            if call_args.len() < self.trait_args.len() || &call_args[..self.trait_args.len()] != self.trait_args {
+                if std::env::var("LOL").is_ok() {
+                    eprintln!("&&&> {:?} => {:?}", self.trait_args, &call_args);
+                }
+                return false;
+            }
+            if std::env::var("LOL").is_ok() {
+                eprintln!("11^^^^> {caller:?} == {callee:?}", );
+            }
+            if callee == caller {
+                return true;
+            }
+            if let Some(original_caller) = self.original_caller {
+                if std::env::var("LOL").is_ok() {
+                    eprintln!("22^^^^> {original_caller:?} == {callee:?} /// {caller:?}", );
+                }
+                // We don't recurse deeper than one level.
+                return original_caller == callee;
+            }
+            if has_body {
+                let body = tcx.optimized_mir(callee);
+                if std::env::var("LOL").is_ok() {
+                    eprintln!("---> {caller:?} => new one: {:?}", body.source.def_id());
+                }
+                if body.source.def_id() == caller {
+                    return true;
+                }
+                check_recursion(
+                    tcx,
+                    body,
+                    caller.expect_local(),
+                    CallRecursion { trait_args: self.trait_args, original_caller: Some(caller) },
+                );
+            }
         }
 
         false
