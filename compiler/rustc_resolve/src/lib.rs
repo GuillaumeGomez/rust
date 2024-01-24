@@ -1112,6 +1112,8 @@ pub struct Resolver<'a, 'tcx> {
     legacy_const_generic_args: FxHashMap<DefId, Option<Vec<usize>>>,
     /// Amount of lifetime parameters for each item in the crate.
     item_generics_num_lifetimes: FxHashMap<LocalDefId, usize>,
+    /// Indexes (without lifetimes) of const generics.
+    item_generics_const_indexes: FxHashMap<LocalDefId, Vec<usize>>,
     /// Amount of parameters for each function in the crate.
     fn_parameter_counts: LocalDefIdMap<usize>,
 
@@ -1442,6 +1444,7 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
             trait_impl_items: Default::default(),
             legacy_const_generic_args: Default::default(),
             item_generics_num_lifetimes: Default::default(),
+            item_generics_const_indexes: Default::default(),
             main_def: Default::default(),
             trait_impls: Default::default(),
             proc_macros: Default::default(),

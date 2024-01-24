@@ -684,6 +684,11 @@ struct LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
 
     /// Count the number of places a lifetime is used.
     lifetime_uses: FxHashMap<LocalDefId, LifetimeUseSet>,
+
+    path_segment_index: usize,
+    segments: Vec<Segment>,
+    current_path_def_id: Option<LocalDefId>,
+    generic_arg_index: usize,
 }
 
 /// Walks the whole crate in DFS order, visiting each item, resolving names as it goes.
@@ -1066,6 +1071,13 @@ impl<'a: 'ast, 'ast, 'tcx> Visitor<'ast> for LateResolutionVisitor<'a, '_, 'ast,
         }
     }
 
+    fn visit_generic_args(&mut self, args: &'ast GenericArgs) {
+        let prev = self.generic_arg_index;
+        self.generic_arg_index = 0;
+        visit::walk_generic_args(self, args);
+        self.generic_arg_index = prev;
+    }
+
     fn visit_generic_arg(&mut self, arg: &'ast GenericArg) {
         debug!("visit_generic_arg({:?})", arg);
         let prev = replace(&mut self.diagnostic_metadata.currently_processing_generics, true);
@@ -1077,9 +1089,36 @@ impl<'a: 'ast, 'ast, 'tcx> Visitor<'ast> for LateResolutionVisitor<'a, '_, 'ast,
                 // resolution in the value namespace succeeds, we have an generic const argument on
                 // our hands.
                 if let TyKind::Path(None, ref path) = ty.kind {
+                    if self
+                        .current_path_def_id
+                        .and_then(|path_def_id| {
+                            self.r.item_generics_const_indexes.get(&path_def_id)
+                        })
+                        .map(|const_indexes| const_indexes.contains(&self.generic_arg_index))
+                        .unwrap_or(false)
+                    {
+                        // self.smart_resolve_path_fragment(
+                        //     &None,
+                        //     &Segment::from_path(path),
+                        //     PathSource::Expr(None),
+                        //     Finalize::new(ty.id, path.span),
+                        //     RecordPartialRes::No,
+                        // );
+                        self.resolve_anon_const_manual(
+                            true,
+                            AnonConstKind::ConstArg(IsRepeatExpr::No),
+                            |this| {
+                                this.smart_resolve_path(ty.id, &None, path, PathSource::Expr(None));
+                                this.visit_path(path, ty.id);
+                            },
+                        );
+                        self.diagnostic_metadata.currently_processing_generics = prev;
+                        self.generic_arg_index += 1;
+                        return;
+                    }
                     // We cannot disambiguate multi-segment paths right now as that requires type
                     // checking.
-                    if path.is_potential_trivial_const_arg() {
+                    else if path.is_potential_trivial_const_arg() {
                         let mut check_ns = |ns| {
                             self.maybe_resolve_ident_in_lexical_scope(path.segments[0].ident, ns)
                                 .is_some()
@@ -1100,6 +1139,7 @@ impl<'a: 'ast, 'ast, 'tcx> Visitor<'ast> for LateResolutionVisitor<'a, '_, 'ast,
                             );
 
                             self.diagnostic_metadata.currently_processing_generics = prev;
+                            self.generic_arg_index += 1;
                             return;
                         }
                     }
@@ -1109,6 +1149,7 @@ impl<'a: 'ast, 'ast, 'tcx> Visitor<'ast> for LateResolutionVisitor<'a, '_, 'ast,
             }
             GenericArg::Lifetime(lt) => self.visit_lifetime(lt, visit::LifetimeCtxt::GenericArg),
             GenericArg::Const(ct) => {
+                self.generic_arg_index += 1;
                 self.resolve_anon_const(ct, AnonConstKind::ConstArg(IsRepeatExpr::No))
             }
         }
@@ -1137,10 +1178,39 @@ impl<'a: 'ast, 'ast, 'tcx> Visitor<'ast> for LateResolutionVisitor<'a, '_, 'ast,
         }
     }
 
+    fn visit_path(&mut self, path: &'ast Path, _id: NodeId) {
+        self.segments = Segment::from_path(path);
+        let prev = self.path_segment_index;
+        self.path_segment_index = 0;
+        visit::walk_path(self, path);
+        self.path_segment_index = prev;
+    }
+
     fn visit_path_segment(&mut self, path_segment: &'ast PathSegment) {
+        self.path_segment_index += 1;
         if let Some(ref args) = path_segment.args {
             match &**args {
-                GenericArgs::AngleBracketed(..) => visit::walk_generic_args(self, args),
+                GenericArgs::AngleBracketed(..) => {
+                    let span = path_segment.span();
+                    let segs = self.segments[..self.path_segment_index].to_vec();
+                    let prev = self.current_path_def_id;
+                    match self.resolve_qpath_anywhere(
+                        &None,
+                        &segs,
+                        TypeNS,
+                        span,
+                        true,
+                        Finalize::new(path_segment.id, span),
+                    ) {
+                        Ok(Some(res)) => {
+                            self.current_path_def_id =
+                                res.base_res().opt_def_id().and_then(|def_id| def_id.as_local());
+                        }
+                        _ => self.current_path_def_id = None,
+                    }
+                    visit::walk_generic_args(self, args);
+                    self.current_path_def_id = prev;
+                }
                 GenericArgs::Parenthesized(p_args) => {
                     // Probe the lifetime ribs to know how to behave.
                     for rib in self.lifetime_ribs.iter().rev() {
@@ -1299,6 +1369,10 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
             // errors at module scope should always be reported
             in_func_body: false,
             lifetime_uses: Default::default(),
+            path_segment_index: 0,
+            segments: Vec::new(),
+            current_path_def_id: None,
+            generic_arg_index: 0,
         }
     }
 
@@ -3717,7 +3791,7 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
         );
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(level = "debug", skip(self), ret)]
     fn smart_resolve_path_fragment(
         &mut self,
         qself: &Option<P<QSelf>>,
@@ -3973,6 +4047,7 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
     }
 
     // Resolve in alternative namespaces if resolution in the primary namespace fails.
+    #[instrument(level = "debug", skip(self))]
     fn resolve_qpath_anywhere(
         &mut self,
         qself: &Option<P<QSelf>>,
@@ -4017,6 +4092,7 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
     }
 
     /// Handles paths that may refer to associated items.
+    #[instrument(level = "debug", skip(self), ret)]
     fn resolve_qpath(
         &mut self,
         qself: &Option<P<QSelf>>,
@@ -4024,11 +4100,6 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
         ns: Namespace,
         finalize: Finalize,
     ) -> Result<Option<PartialRes>, Spanned<ResolutionError<'a>>> {
-        debug!(
-            "resolve_qpath(qself={:?}, path={:?}, ns={:?}, finalize={:?})",
-            qself, path, ns, finalize,
-        );
-
         if let Some(qself) = qself {
             if qself.position == 0 {
                 // This is a case like `<T>::B`, where there is no
@@ -4401,7 +4472,10 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
                 for arg in args {
                     self.resolve_expr(arg, None);
                 }
+                let prev = self.path_segment_index;
+                self.path_segment_index = 0;
                 self.visit_path_segment(seg);
+                self.path_segment_index = prev;
             }
 
             ExprKind::Call(ref callee, ref arguments) => {
@@ -4704,12 +4778,27 @@ impl<'ast> Visitor<'ast> for ItemInfoCollector<'_, '_, '_> {
                 }
 
                 let def_id = self.r.local_def_id(item.id);
-                let count = generics
-                    .params
-                    .iter()
-                    .filter(|param| matches!(param.kind, ast::GenericParamKind::Lifetime { .. }))
-                    .count();
-                self.r.item_generics_num_lifetimes.insert(def_id, count);
+                let mut nb_lifetimes = 0;
+                let mut index = 0;
+                let mut const_indexes = Vec::new();
+                for param in generics.params.iter() {
+                    match param.kind {
+                        ast::GenericParamKind::Lifetime { .. } => {
+                            nb_lifetimes += 1;
+                            // We don't increase the index if it's a lifetime.
+                            continue;
+                        }
+                        ast::GenericParamKind::Const { .. } => {
+                            const_indexes.push(index);
+                        }
+                        _ => {}
+                    }
+                    index += 1;
+                }
+                if !const_indexes.is_empty() {
+                    self.r.item_generics_const_indexes.insert(def_id, const_indexes);
+                }
+                self.r.item_generics_num_lifetimes.insert(def_id, nb_lifetimes);
             }
 
             ItemKind::Mod(..)
