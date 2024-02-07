@@ -196,7 +196,7 @@ pub struct ResolverAstLowering {
     pub legacy_const_generic_args: FxHashMap<DefId, Option<Vec<usize>>>,
 
     /// Resolutions for nodes that have a single resolution.
-    pub partial_res_map: NodeMap<hir::def::PartialRes>,
+    pub partial_res_map: NodeMap<hir::def::PerNS<Option<hir::def::PartialRes>>>,
     /// Resolutions for import nodes, which have multiple resolutions in different namespaces.
     pub import_res_map: NodeMap<hir::def::PerNS<Option<Res<ast::NodeId>>>>,
     /// Resolutions for labels (node IDs of their corresponding blocks or loops).

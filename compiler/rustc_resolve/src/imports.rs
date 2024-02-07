@@ -1433,7 +1433,7 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
         }
 
         // Record the destination of this import
-        self.record_partial_res(id, PartialRes::new(module.res().unwrap()));
+        self.record_partial_res(id, PartialRes::new(module.res().unwrap()), TypeNS);
     }
 
     // Miscellaneous post-processing, including recording re-exports,

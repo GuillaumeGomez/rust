@@ -685,6 +685,8 @@ struct LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
 
     /// Count the number of places a lifetime is used.
     lifetime_uses: FxHashMap<LocalDefId, LifetimeUseSet>,
+
+    ignore_duplicate_err: bool,
 }
 
 /// Walks the whole crate in DFS order, visiting each item, resolving names as it goes.
@@ -755,7 +757,7 @@ impl<'a: 'ast, 'ast, 'tcx> Visitor<'ast> for LateResolutionVisitor<'a, '_, 'ast,
                 if qself.is_none()
                     && let Some(partial_res) = self.r.partial_res_map.get(&ty.id)
                     && let Some(Res::Def(DefKind::Trait | DefKind::TraitAlias, _)) =
-                        partial_res.full_res()
+                        partial_res.type_ns.and_then(|r| r.full_res())
                 {
                     // This path is actually a bare trait object. In case of a bare `Fn`-trait
                     // object with anonymous lifetimes, we need this rib to correctly place the
@@ -785,7 +787,12 @@ impl<'a: 'ast, 'ast, 'tcx> Visitor<'ast> for LateResolutionVisitor<'a, '_, 'ast,
                         None,
                     )
                     .map_or(Res::Err, |d| d.res());
-                self.r.record_partial_res(ty.id, PartialRes::new(res));
+                self.r.record_partial_res_ignore_duplicate(
+                    ty.id,
+                    PartialRes::new(res),
+                    TypeNS,
+                    self.ignore_duplicate_err,
+                );
                 visit::walk_ty(self, ty)
             }
             TyKind::ImplTrait(node_id, _) => {
@@ -1081,33 +1088,31 @@ impl<'a: 'ast, 'ast, 'tcx> Visitor<'ast> for LateResolutionVisitor<'a, '_, 'ast,
                 if let TyKind::Path(None, ref path) = ty.kind {
                     // We cannot disambiguate multi-segment paths right now as that requires type
                     // checking.
+                    let prev_err = replace(&mut self.ignore_duplicate_err, true);
+                    self.resolve_anon_const_manual(
+                        true,
+                        AnonConstKind::ConstArg(IsRepeatExpr::No),
+                        |this| {
+                            this.smart_resolve_path(ty.id, &None, path, PathSource::Expr(None));
+                            this.visit_path(path, ty.id);
+                        },
+                    );
                     if path.is_potential_trivial_const_arg() {
                         let mut check_ns = |ns| {
                             self.maybe_resolve_ident_in_lexical_scope(path.segments[0].ident, ns)
                                 .is_some()
                         };
                         if !check_ns(TypeNS) && check_ns(ValueNS) {
-                            self.resolve_anon_const_manual(
-                                true,
-                                AnonConstKind::ConstArg(IsRepeatExpr::No),
-                                |this| {
-                                    this.smart_resolve_path(
-                                        ty.id,
-                                        &None,
-                                        path,
-                                        PathSource::Expr(None),
-                                    );
-                                    this.visit_path(path, ty.id);
-                                },
-                            );
-
                             self.diagnostic_metadata.currently_processing_generic_args = prev;
+                            self.ignore_duplicate_err = prev_err;
                             return;
                         }
                     }
+                    self.smart_resolve_path(ty.id, &None, path, PathSource::Type);
+                    self.ignore_duplicate_err = prev_err;
+                } else {
+                    self.visit_ty(ty);
                 }
-
-                self.visit_ty(ty);
             }
             GenericArg::Lifetime(lt) => self.visit_lifetime(lt, visit::LifetimeCtxt::GenericArg),
             GenericArg::Const(ct) => {
@@ -1301,6 +1306,7 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
             // errors at module scope should always be reported
             in_func_body: false,
             lifetime_uses: Default::default(),
+            ignore_duplicate_err: false,
         }
     }
 
@@ -1969,6 +1975,9 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
         candidate: LifetimeElisionCandidate,
     ) {
         if let Some(prev_res) = self.r.lifetimes_res_map.insert(id, res) {
+            if self.ignore_duplicate_err {
+                return;
+            }
             panic!("lifetime {id:?} resolved multiple times ({prev_res:?} before, {res:?} now)")
         }
         match res {
@@ -1984,6 +1993,10 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
     #[instrument(level = "debug", skip(self))]
     fn record_lifetime_param(&mut self, id: NodeId, res: LifetimeRes) {
         if let Some(prev_res) = self.r.lifetimes_res_map.insert(id, res) {
+            if self.ignore_duplicate_err {
+                return;
+            }
+
             panic!(
                 "lifetime parameter {id:?} resolved multiple times ({prev_res:?} before, {res:?} now)"
             )
@@ -2150,7 +2163,10 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
                 match ty.kind {
                     TyKind::ImplicitSelf => true,
                     TyKind::Path(None, _) => {
-                        let path_res = self.r.partial_res_map[&ty.id].full_res();
+                        let Some(res) = self.r.partial_res_map[&ty.id].type_ns else {
+                            return false;
+                        };
+                        let path_res = res.full_res();
                         if let Some(Res::SelfTyParam { .. } | Res::SelfTyAlias { .. }) = path_res {
                             return true;
                         }
@@ -2197,7 +2213,7 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
                     None
                 }
             })
-            .and_then(|res| res.full_res())
+            .and_then(|res| res.type_ns.and_then(|r| r.full_res()))
             .filter(|res| {
                 // Permit the types that unambiguously always
                 // result in the same type constructor being used
@@ -2662,7 +2678,12 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
                 }
                 _ => span_bug!(param.ident.span, "Unexpected rib kind {:?}", kind),
             };
-            self.r.record_partial_res(param.id, PartialRes::new(res));
+            self.r.record_partial_res_ignore_duplicate(
+                param.id,
+                PartialRes::new(res),
+                if def_kind == DefKind::TyParam { TypeNS } else { ValueNS },
+                self.ignore_duplicate_err,
+            );
             rib.bindings.insert(ident, res);
         }
 
@@ -3156,7 +3177,12 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
             | (DefKind::AssocFn, AssocItemKind::Fn(..))
             | (DefKind::AssocConst, AssocItemKind::Const(..))
             | (DefKind::AssocFn, AssocItemKind::Delegation(..)) => {
-                self.r.record_partial_res(id, PartialRes::new(res));
+                self.r.record_partial_res_ignore_duplicate(
+                    id,
+                    PartialRes::new(res),
+                    ns,
+                    self.ignore_duplicate_err,
+                );
                 return;
             }
             _ => {}
@@ -3309,10 +3335,8 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
     }
 
     fn is_base_res_local(&self, nid: NodeId) -> bool {
-        matches!(
-            self.r.partial_res_map.get(&nid).map(|res| res.expect_full_res()),
-            Some(Res::Local(..))
-        )
+        let Some(per_ns) = self.r.partial_res_map.get(&nid) else { return false };
+        per_ns.present_items().filter_map(|r| r.full_res()).any(|r| matches!(r, Res::Local(..)))
     }
 
     /// Compute the binding map for an or-pattern. Checks that all of the arms in the or-pattern
@@ -3494,7 +3518,12 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
                     let res = self
                         .try_resolve_as_non_binding(pat_src, bmode, ident, has_sub)
                         .unwrap_or_else(|| self.fresh_binding(ident, pat.id, pat_src, bindings));
-                    self.r.record_partial_res(pat.id, PartialRes::new(res));
+                    self.r.record_partial_res_ignore_duplicate(
+                        pat.id,
+                        PartialRes::new(res),
+                        TypeNS,
+                        self.ignore_duplicate_err,
+                    );
                     self.r.record_pat_span(pat.id, pat.span);
                 }
                 PatKind::TupleStruct(ref qself, ref path, ref sub_patterns) => {
@@ -3709,11 +3738,16 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
         path: &Path,
         source: PathSource<'ast>,
     ) {
+        let mut finalize = Finalize::new(id, path.span);
+
+        if self.ignore_duplicate_err {
+            finalize.report_private = false;
+        }
         self.smart_resolve_path_fragment(
             qself,
             &Segment::from_path(path),
             source,
-            Finalize::new(id, path.span),
+            finalize,
             RecordPartialRes::Yes,
         );
     }
@@ -3731,7 +3765,7 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
 
         let Finalize { node_id, path_span, .. } = finalize;
         let report_errors = |this: &mut Self, res: Option<Res>| {
-            if this.should_report_errs() {
+            if this.should_report_errs() && !this.ignore_duplicate_err {
                 let (err, candidates) =
                     this.smart_resolve_report_errors(path, None, path_span, source, res);
 
@@ -3956,7 +3990,12 @@ impl<'a: 'ast, 'b, 'ast, 'tcx> LateResolutionVisitor<'a, 'b, 'ast, 'tcx> {
 
         if record_partial_res == RecordPartialRes::Yes {
             // Avoid recording definition of `A::B` in `<T as A>::B::C`.
-            self.r.record_partial_res(node_id, partial_res);
+            self.r.record_partial_res_ignore_duplicate(
+                node_id,
+                partial_res,
+                ns,
+                self.ignore_duplicate_err,
+            );
             self.resolve_elided_lifetimes_in_path(partial_res, path, source, path_span);
         }
 

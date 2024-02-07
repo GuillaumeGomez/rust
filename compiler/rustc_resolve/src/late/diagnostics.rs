@@ -1313,7 +1313,7 @@ impl<'a: 'ast, 'ast, 'tcx> LateResolutionVisitor<'a, '_, 'ast, 'tcx> {
                 return false;
             };
             if !matches!(
-                partial_res.full_res(),
+                partial_res.type_ns.and_then(|r| r.full_res()),
                 Some(hir::def::Res::Def(hir::def::DefKind::AssocTy, _))
             ) {
                 return false;
@@ -1330,7 +1330,7 @@ impl<'a: 'ast, 'ast, 'tcx> LateResolutionVisitor<'a, '_, 'ast, 'tcx> {
                 return false;
             };
             if !matches!(
-                partial_res.full_res(),
+                partial_res.type_ns.and_then(|r| r.full_res()),
                 Some(hir::def::Res::Def(hir::def::DefKind::TyParam, _))
             ) {
                 return false;
@@ -2034,7 +2034,7 @@ impl<'a: 'ast, 'ast, 'tcx> LateResolutionVisitor<'a, '_, 'ast, 'tcx> {
                 // Look for a field with the same name in the current self_type.
                 if let Some(resolution) = self.r.partial_res_map.get(&node_id) {
                     if let Some(Res::Def(DefKind::Struct | DefKind::Union, did)) =
-                        resolution.full_res()
+                        resolution.type_ns.and_then(|r| r.full_res())
                     {
                         if let Some(field_ids) = self.r.field_def_ids(did) {
                             if let Some(field_id) = field_ids

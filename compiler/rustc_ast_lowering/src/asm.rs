@@ -193,6 +193,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                         let static_def_id = self
                             .resolver
                             .get_partial_res(sym.id)
+                            .value_ns
                             .and_then(|res| res.full_res())
                             .and_then(|res| match res {
                                 Res::Def(DefKind::Static(_), def_id) => Some(def_id),

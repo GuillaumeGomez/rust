@@ -63,6 +63,7 @@ use rustc_span::{Span, DUMMY_SP};
 
 use smallvec::{smallvec, SmallVec};
 use std::cell::{Cell, RefCell};
+use std::collections::hash_map::Entry;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -995,7 +996,7 @@ pub struct Resolver<'a, 'tcx> {
     pat_span_map: NodeMap<Span>,
 
     /// Resolutions for nodes that have a single resolution.
-    partial_res_map: NodeMap<PartialRes>,
+    partial_res_map: NodeMap<PerNS<Option<PartialRes>>>,
     /// Resolutions for import nodes, which have multiple resolutions in different namespaces.
     import_res_map: NodeMap<PerNS<Option<Res>>>,
     /// Resolutions for labels (node IDs of their corresponding blocks or loops).
@@ -1948,10 +1949,36 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
         module
     }
 
-    fn record_partial_res(&mut self, node_id: NodeId, resolution: PartialRes) {
+    fn record_partial_res(&mut self, node_id: NodeId, resolution: PartialRes, ns: Namespace) {
+        self.record_partial_res_ignore_duplicate(node_id, resolution, ns, false)
+    }
+
+    fn record_partial_res_ignore_duplicate(
+        &mut self,
+        node_id: NodeId,
+        resolution: PartialRes,
+        ns: Namespace,
+        ignore_duplicate: bool,
+    ) {
         debug!("(recording res) recording {:?} for {}", resolution, node_id);
-        if let Some(prev_res) = self.partial_res_map.insert(node_id, resolution) {
-            panic!("path resolved multiple times ({prev_res:?} before, {resolution:?} now)");
+        match self.partial_res_map.entry(node_id) {
+            Entry::Occupied(mut entry) => {
+                let per_ns = entry.get_mut();
+                if let Some(prev_res) = per_ns[ns] {
+                    if ignore_duplicate {
+                        return;
+                    }
+                    panic!(
+                        "path resolved multiple times ({prev_res:?} before, {resolution:?} now)"
+                    );
+                }
+                per_ns[ns] = Some(resolution);
+            }
+            Entry::Vacant(entry) => {
+                let mut per_ns = PerNS::default();
+                per_ns[ns] = Some(resolution);
+                entry.insert(per_ns);
+            }
         }
     }
 
@@ -2092,30 +2119,32 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                 return None;
             }
 
-            let res = self.partial_res_map.get(&expr.id)?.full_res()?;
-            if let Res::Def(def::DefKind::Fn, def_id) = res {
-                // We only support cross-crate argument rewriting. Uses
-                // within the same crate should be updated to use the new
-                // const generics style.
-                if def_id.is_local() {
-                    return None;
-                }
-
-                if let Some(v) = self.legacy_const_generic_args.get(&def_id) {
-                    return v.clone();
-                }
-
-                let attr = self.tcx.get_attr(def_id, sym::rustc_legacy_const_generics)?;
-                let mut ret = Vec::new();
-                for meta in attr.meta_item_list()? {
-                    match meta.lit()?.kind {
-                        LitKind::Int(a, _) => ret.push(a.get() as usize),
-                        _ => panic!("invalid arg index"),
+            let res = self.partial_res_map.get(&expr.id)?;
+            for partial_res in res.present_items().filter_map(|r| r.full_res()) {
+                if let Res::Def(def::DefKind::Fn, def_id) = partial_res {
+                    // We only support cross-crate argument rewriting. Uses
+                    // within the same crate should be updated to use the new
+                    // const generics style.
+                    if def_id.is_local() {
+                        return None;
                     }
+
+                    if let Some(v) = self.legacy_const_generic_args.get(&def_id) {
+                        return v.clone();
+                    }
+
+                    let attr = self.tcx.get_attr(def_id, sym::rustc_legacy_const_generics)?;
+                    let mut ret = Vec::new();
+                    for meta in attr.meta_item_list()? {
+                        match meta.lit()?.kind {
+                            LitKind::Int(a, _) => ret.push(a.get() as usize),
+                            _ => panic!("invalid arg index"),
+                        }
+                    }
+                    // Cache the lookup to avoid parsing attributes for an item multiple times.
+                    self.legacy_const_generic_args.insert(def_id, Some(ret.clone()));
+                    return Some(ret);
                 }
-                // Cache the lookup to avoid parsing attributes for an item multiple times.
-                self.legacy_const_generic_args.insert(def_id, Some(ret.clone()));
-                return Some(ret);
             }
         }
         None

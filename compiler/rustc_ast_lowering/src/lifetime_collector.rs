@@ -81,7 +81,7 @@ impl<'ast> Visitor<'ast> for LifetimeCollectVisitor<'ast> {
             TyKind::Path(None, _) => {
                 // We can sometimes encounter bare trait objects
                 // which are represented in AST as paths.
-                if let Some(partial_res) = self.resolver.get_partial_res(t.id)
+                if let Some(partial_res) = self.resolver.get_partial_res(t.id).type_ns
                     && let Some(Res::Def(DefKind::Trait | DefKind::TraitAlias, _)) =
                         partial_res.full_res()
                 {

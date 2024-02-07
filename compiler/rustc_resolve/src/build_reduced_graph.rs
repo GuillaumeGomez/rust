@@ -282,7 +282,7 @@ impl<'a, 'b, 'tcx> BuildReducedGraphVisitor<'a, 'b, 'tcx> {
                     PathResult::Module(ModuleOrUniformRoot::Module(module)) => {
                         let res = module.res().expect("visibility resolved to unnamed block");
                         if finalize {
-                            self.r.record_partial_res(id, PartialRes::new(res));
+                            self.r.record_partial_res(id, PartialRes::new(res), TypeNS);
                         }
                         if module.is_normal() {
                             match res {

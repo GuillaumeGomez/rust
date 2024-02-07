@@ -244,7 +244,15 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         ident: Ident,
         lower_sub: impl FnOnce(&mut Self) -> Option<&'hir hir::Pat<'hir>>,
     ) -> hir::PatKind<'hir> {
-        match self.resolver.get_partial_res(p.id).map(|d| d.expect_full_res()) {
+        let per_ns = self.resolver.get_partial_res(p.id);
+        let res = match (per_ns.type_ns, per_ns.value_ns) {
+            (Some(type_ns), None) => Some(type_ns.expect_full_res()),
+            (None, Some(value_ns)) => Some(value_ns.expect_full_res()),
+            // FIXME: should very likely send an error if both are `Some`!
+            (Some(type_ns), Some(_)) => Some(type_ns.expect_full_res()),
+            (None, None) => None,
+        };
+        match res {
             // `None` can occur in body-less function signatures
             res @ (None | Some(Res::Local(_))) => {
                 let canonical_id = match res {

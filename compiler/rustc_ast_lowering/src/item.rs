@@ -968,8 +968,8 @@ impl<'hir> LoweringContext<'_, 'hir> {
         let trait_item_def_id = self
             .resolver
             .get_partial_res(i.id)
-            .map(|r| r.expect_full_res().opt_def_id())
-            .unwrap_or(None);
+            .present_items()
+            .find_map(|r| r.expect_full_res().opt_def_id());
         self.is_in_trait_impl = trait_item_def_id.is_some();
 
         hir::ImplItemRef {
@@ -1427,6 +1427,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
                 match self
                     .resolver
                     .get_partial_res(bound_pred.bounded_ty.id)
+                    .type_ns
                     .and_then(|r| r.full_res())
                 {
                     Some(Res::Def(DefKind::TyParam, def_id))

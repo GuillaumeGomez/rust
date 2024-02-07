@@ -570,6 +570,15 @@ impl<T> PerNS<T> {
     pub fn iter(&self) -> IntoIter<&T, 3> {
         [&self.value_ns, &self.type_ns, &self.macro_ns].into_iter()
     }
+
+    pub fn iter_with_ns(&self) -> IntoIter<(Namespace, &T), 3> {
+        [
+            (Namespace::ValueNS, &self.value_ns),
+            (Namespace::TypeNS, &self.type_ns),
+            (Namespace::MacroNS, &self.macro_ns),
+        ]
+        .into_iter()
+    }
 }
 
 impl<T> ::std::ops::Index<Namespace> for PerNS<T> {

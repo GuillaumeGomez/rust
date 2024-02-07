@@ -53,7 +53,7 @@ use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_data_structures::sync::Lrc;
 use rustc_errors::{DiagCtxt, DiagnosticArgFromDisplay, StashKey};
 use rustc_hir as hir;
-use rustc_hir::def::{DefKind, LifetimeRes, Namespace, PartialRes, PerNS, Res};
+use rustc_hir::def::{DefKind, LifetimeRes, PartialRes, PerNS, Res};
 use rustc_hir::def_id::{LocalDefId, LocalDefIdMap, CRATE_DEF_ID, LOCAL_CRATE};
 use rustc_hir::{ConstArg, GenericArg, ItemLocalMap, ParamName, TraitCandidate};
 use rustc_index::{Idx, IndexSlice, IndexVec};
@@ -201,7 +201,9 @@ impl ResolverAstLowering {
                 return None;
             }
 
-            if let Res::Def(DefKind::Fn, def_id) = self.partial_res_map.get(&expr.id)?.full_res()? {
+            if let Res::Def(DefKind::Fn, def_id) =
+                self.partial_res_map.get(&expr.id)?.value_ns?.full_res()?
+            {
                 // We only support cross-crate argument rewriting. Uses
                 // within the same crate should be updated to use the new
                 // const generics style.
@@ -219,8 +221,8 @@ impl ResolverAstLowering {
     }
 
     /// Obtains resolution for a `NodeId` with a single resolution.
-    fn get_partial_res(&self, id: NodeId) -> Option<PartialRes> {
-        self.partial_res_map.get(&id).copied()
+    fn get_partial_res(&self, id: NodeId) -> PerNS<Option<PartialRes>> {
+        self.partial_res_map.get(&id).copied().unwrap_or_default()
     }
 
     /// Obtains per-namespace resolutions for `use` statement with the given `NodeId`.
@@ -733,7 +735,13 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     }
 
     fn expect_full_res(&mut self, id: NodeId) -> Res<NodeId> {
-        self.resolver.get_partial_res(id).map_or(Res::Err, |pr| pr.expect_full_res())
+        self.resolver
+            .get_partial_res(id)
+            .present_items()
+            .map(|pr| pr.expect_full_res())
+            .filter(|res| !matches!(res, Res::Err))
+            .next()
+            .unwrap_or(Res::Err)
     }
 
     fn lower_import_res(&mut self, id: NodeId, span: Span) -> SmallVec<[Res; 3]> {
@@ -1162,53 +1170,51 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                     // type and value namespaces. If we resolved the path in the value namespace, we
                     // transform it into a generic const argument.
                     TyKind::Path(None, path) => {
-                        if let Some(res) = self
+                        if self
                             .resolver
                             .get_partial_res(ty.id)
+                            .value_ns
                             .and_then(|partial_res| partial_res.full_res())
+                            .is_some()
                         {
-                            if !res.matches_ns(Namespace::TypeNS)
-                                && path.is_potential_trivial_const_arg()
-                            {
-                                debug!(
-                                    "lower_generic_arg: Lowering type argument as const argument: {:?}",
-                                    ty,
-                                );
+                            debug!(
+                                "lower_generic_arg: Lowering type argument as const argument: {:?}",
+                                ty,
+                            );
 
-                                // Construct an AnonConst where the expr is the "ty"'s path.
+                            // Construct an AnonConst where the expr is the "ty"'s path.
 
-                                let parent_def_id = self.current_hir_id_owner;
-                                let node_id = self.next_node_id();
-                                let span = self.lower_span(ty.span);
+                            let parent_def_id = self.current_hir_id_owner;
+                            let node_id = self.next_node_id();
+                            let span = self.lower_span(ty.span);
 
-                                // Add a definition for the in-band const def.
-                                let def_id = self.create_def(
-                                    parent_def_id.def_id,
-                                    node_id,
-                                    kw::Empty,
-                                    DefKind::AnonConst,
-                                    span,
-                                );
+                            // Add a definition for the in-band const def.
+                            let def_id = self.create_def(
+                                parent_def_id.def_id,
+                                node_id,
+                                kw::Empty,
+                                DefKind::AnonConst,
+                                span,
+                            );
 
-                                let path_expr = Expr {
-                                    id: ty.id,
-                                    kind: ExprKind::Path(None, path.clone()),
-                                    span,
-                                    attrs: AttrVec::new(),
-                                    tokens: None,
-                                };
+                            let path_expr = Expr {
+                                id: ty.id,
+                                kind: ExprKind::Path(None, path.clone()),
+                                span,
+                                attrs: AttrVec::new(),
+                                tokens: None,
+                            };
 
-                                let ct = self.with_new_scopes(span, |this| hir::AnonConst {
-                                    def_id,
-                                    hir_id: this.lower_node_id(node_id),
-                                    body: this.lower_const_body(path_expr.span, Some(&path_expr)),
-                                });
-                                return GenericArg::Const(ConstArg {
-                                    value: ct,
-                                    span,
-                                    is_desugared_from_effects: false,
-                                });
-                            }
+                            let ct = self.with_new_scopes(span, |this| hir::AnonConst {
+                                def_id,
+                                hir_id: this.lower_node_id(node_id),
+                                body: this.lower_const_body(path_expr.span, Some(&path_expr)),
+                            });
+                            return GenericArg::Const(ConstArg {
+                                value: ct,
+                                span,
+                                is_desugared_from_effects: false,
+                            });
                         }
                     }
                     _ => {}
@@ -1242,7 +1248,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         // The other cases when a qpath should be opportunistically made a trait object are handled
         // by `ty_path`.
         if qself.is_none()
-            && let Some(partial_res) = self.resolver.get_partial_res(t.id)
+            && let Some(partial_res) = self.resolver.get_partial_res(t.id).type_ns
             && let Some(Res::Def(DefKind::Trait | DefKind::TraitAlias, _)) = partial_res.full_res()
         {
             let (bounds, lifetime_bound) = self.with_dyn_type_scope(true, |this| {

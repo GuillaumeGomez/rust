@@ -1371,7 +1371,11 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                     if let Some(id) = id {
                         if !this.partial_res_map.contains_key(&id) {
                             assert!(id != ast::DUMMY_NODE_ID, "Trying to resolve dummy id");
-                            this.record_partial_res(id, PartialRes::new(res));
+                            this.record_partial_res(
+                                id,
+                                PartialRes::new(res),
+                                opt_ns.unwrap_or(TypeNS),
+                            );
                         }
                     }
                 }

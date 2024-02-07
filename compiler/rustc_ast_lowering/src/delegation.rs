@@ -46,6 +46,7 @@ use rustc_ast as ast;
 use rustc_ast::*;
 use rustc_errors::ErrorGuaranteed;
 use rustc_hir as hir;
+use rustc_hir::def::PerNS;
 use rustc_hir::def_id::DefId;
 use rustc_middle::span_bug;
 use rustc_middle::ty::ResolverAstLowering;
@@ -106,6 +107,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
         let sig_id = self
             .resolver
             .get_partial_res(sig_id)
+            .type_ns
             .map(|r| r.expect_full_res().opt_def_id())
             .unwrap_or(None);
 
@@ -325,13 +327,22 @@ struct SelfResolver<'a> {
 
 impl<'a> SelfResolver<'a> {
     fn try_replace_id(&mut self, id: NodeId) {
-        if let Some(res) = self.resolver.partial_res_map.get(&id)
-            && let Some(Res::Local(sig_id)) = res.full_res()
+        let ns = if let Some(per_ns) = self.resolver.partial_res_map.get(&id)
+            && let Some((ns, sig_id)) =
+                per_ns.iter_with_ns().find_map(|(ns, r)| match r.and_then(|r| r.full_res()) {
+                    Some(Res::Local(sig_id)) => Some((ns, sig_id)),
+                    _ => None,
+                })
             && sig_id == self.path_id
         {
-            let new_res = PartialRes::new(Res::Local(self.self_param_id));
-            self.resolver.partial_res_map.insert(id, new_res);
-        }
+            ns
+        } else {
+            return;
+        };
+        let new_res = PartialRes::new(Res::Local(self.self_param_id));
+        let mut per_ns = PerNS::default();
+        per_ns[ns] = Some(new_res);
+        self.resolver.partial_res_map.insert(id, per_ns);
     }
 }
 
