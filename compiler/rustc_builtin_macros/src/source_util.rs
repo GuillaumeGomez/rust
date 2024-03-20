@@ -196,13 +196,17 @@ pub fn expand_include_str(
             return ExpandResult::Ready(DummyResult::any(sp, guar));
         }
     };
-    ExpandResult::Ready(match cx.source_map().load_binary_file(&file) {
-        Ok(bytes) => match std::str::from_utf8(&bytes) {
-            Ok(src) => {
-                let interned_src = Symbol::intern(src);
-                MacEager::expr(cx.expr_str(sp, interned_src))
-            }
-            Err(_) => {
+    ExpandResult::Ready(match cx.source_map().load_file(&file) {
+        Ok(source_file) => {
+            if let Some(source) = &source_file.src {
+                let p = maybe_file_to_stream(cx.psess(), &file, Some(sp)).unwrap();
+                // p.bump();
+                let span = p.token.span.with_hi(source_file.end_position()).with_lo(source_file.start_pos);
+                // let span = Span::new(source_file.start_pos, source_file.end_position(), s, Some(sp));
+                // let span = sp.with_lo(source_file.start_pos).with_hi(source_file.end_position());
+                let interned_src = Symbol::intern(source);
+                MacEager::expr(cx.expr_str(span, interned_src))
+            } else {
                 let guar = cx.dcx().span_err(sp, format!("{} wasn't a utf-8 file", file.display()));
                 DummyResult::any(sp, guar)
             }
