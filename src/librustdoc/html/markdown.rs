@@ -42,10 +42,11 @@ use std::fmt::Write;
 use std::iter::Peekable;
 use std::ops::{ControlFlow, Range};
 use std::str::{self, CharIndices};
+use std::sync::Arc;
 
 use crate::clean::RenderedLink;
 use crate::doctest;
-use crate::doctest::GlobalTestOptions;
+use crate::doctest::{GlobalTestOptions, IndividualTestOptions};
 use crate::html::escape::Escape;
 use crate::html::format::Buffer;
 use crate::html::highlight;
@@ -305,8 +306,18 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for CodeBlocks<'_, 'a, I> {
 
             let mut opts: GlobalTestOptions = Default::default();
             opts.insert_indent_space = true;
-            let (test, _) = doctest::make_test(test, krate, edition, String::new())
-                .generate_unique_doctest(false, &opts, None);
+            let (test, _) = doctest::make_test(
+                test,
+                krate,
+                edition,
+                String::new(),
+                LangString::empty_for_test(),
+                0,
+                String::new(),
+                Arc::new(IndividualTestOptions::empty()),
+                String::new(),
+            )
+            .generate_unique_doctest(false, &opts, None);
             let channel = if test.contains("#![feature(") { "&amp;version=nightly" } else { "" };
 
             let test_escaped = small_url_encode(test);
@@ -870,6 +881,24 @@ pub(crate) struct LangString {
     pub(crate) edition: Option<Edition>,
     pub(crate) added_classes: Vec<String>,
     pub(crate) unknown: Vec<String>,
+}
+
+impl LangString {
+    pub(crate) fn empty_for_test() -> Self {
+        Self {
+            original: String::new(),
+            should_panic: false,
+            no_run: false,
+            ignore: Ignore::None,
+            rust: true,
+            test_harness: true,
+            compile_fail: false,
+            error_codes: Vec::new(),
+            edition: None,
+            added_classes: Vec::new(),
+            unknown: Vec::new(),
+        }
+    }
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
