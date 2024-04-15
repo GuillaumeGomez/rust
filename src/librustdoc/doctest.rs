@@ -865,6 +865,7 @@ pub(crate) fn make_test(
     file: String,
     rustdoc_test_options: Arc<IndividualTestOptions>,
     test_id: String,
+    target_str: &str,
 ) -> DocTest {
     let outdir = Arc::new(if let Some(ref path) = rustdoc_test_options.persist_doctests {
         let mut path = path.clone();
@@ -973,6 +974,12 @@ pub(crate) fn make_test(
             (found_main, found_extern_crate, found_macro)
         })
     });
+
+    let ignore = match lang_string.ignore {
+        Ignore::All => true,
+        Ignore::None => false,
+        Ignore::Some(ref ignores) => ignores.iter().any(|s| target_str.contains(s)),
+    };
     let Ok((mut main_fn_span, already_has_extern_crate, found_macro)) = result else {
         // If the parser panicked due to a fatal error, pass the test code through unchanged.
         // The error will be reported during compilation.
@@ -984,7 +991,7 @@ pub(crate) fn make_test(
             crates,
             everything_else,
             already_has_extern_crate: false,
-            ignore: false,
+            ignore,
             crate_name,
             name,
             lang_string,
@@ -1021,7 +1028,7 @@ pub(crate) fn make_test(
         crates,
         everything_else,
         already_has_extern_crate,
-        ignore: false,
+        ignore,
         crate_name,
         name,
         lang_string,
@@ -1478,7 +1485,7 @@ impl Tester for Collector {
         );
 
         debug!("creating test {name}: {test}");
-        let mut doctest = make_test(
+        let doctest = make_test(
             test,
             Some(crate_name),
             edition,
@@ -1488,12 +1495,8 @@ impl Tester for Collector {
             file,
             Arc::clone(&self.rustdoc_test_options),
             test_id,
+            &target_str,
         );
-        doctest.ignore = match doctest.lang_string.ignore {
-            Ignore::All => true,
-            Ignore::None => false,
-            Ignore::Some(ref ignores) => ignores.iter().any(|s| target_str.contains(s)),
-        };
         self.tests.add_doctest(
             doctest,
             &opts,
