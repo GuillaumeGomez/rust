@@ -894,7 +894,7 @@ impl LangString {
             no_run: false,
             ignore: Ignore::None,
             rust: true,
-            test_harness: true,
+            test_harness: false,
             compile_fail: false,
             error_codes: Vec::new(),
             edition: None,
