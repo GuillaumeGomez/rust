@@ -10,7 +10,6 @@ use rustc_middle::hir::map::Map;
 use rustc_middle::hir::nested_filter;
 use rustc_middle::ty::TyCtxt;
 use rustc_parse::maybe_new_parser_from_source_str;
-use rustc_parse::parser::attr::InnerAttrPolicy;
 use rustc_resolve::rustdoc::span_of_fragments;
 use rustc_session::config::{self, CrateType, ErrorOutputType};
 use rustc_session::parse::ParseSess;
@@ -609,9 +608,6 @@ pub(crate) struct DocTest {
     supports_color: bool,
     already_has_extern_crate: bool,
     main_fn_span: Option<Span>,
-    crate_attrs: String,
-    crates: String,
-    everything_else: String,
     ignore: bool,
     crate_name: Option<String>,
     name: String,
@@ -625,6 +621,7 @@ pub(crate) struct DocTest {
     outdir: Arc<DirState>,
     rustdoc_test_options: Arc<IndividualTestOptions>,
     no_run: bool,
+    info: DoctestInfo,
 }
 
 impl DocTest {
@@ -638,19 +635,20 @@ impl DocTest {
         if self.failed_ast {
             // If the AST failed to compile, no need to go generate a complete doctest, the error
             // will be better this way.
-            return (self.everything_else.clone(), 0);
+            return (self.test_code.clone(), 0);
         }
         let mut line_offset = 0;
         let mut prog = String::with_capacity(
-            self.test_code.len() + self.crate_attrs.len() + self.crates.len(),
+            self.info.everything_else.len() + self.info.crate_attrs.len() + self.info.crates.len() + self.info.mod_attrs.len(),
         );
 
         Self::push_attrs(&mut prog, opts, &mut line_offset);
 
         // Now push any outer attributes from the example, assuming they
         // are intended to be crate attributes.
-        prog.push_str(&self.crate_attrs);
-        prog.push_str(&self.crates);
+        prog.push_str(&self.info.crate_attrs);
+        prog.push_str(&self.info.mod_attrs);
+        prog.push_str(&self.info.crates);
 
         // Don't inject `extern crate std` because it's already injected by the
         // compiler.
@@ -674,9 +672,9 @@ impl DocTest {
 
         // FIXME: This code cannot yet handle no_std test cases yet
         if dont_insert_main || self.main_fn_span.is_some() || prog.contains("![no_std]") {
-            prog.push_str(&self.everything_else);
+            prog.push_str(&self.info.everything_else);
         } else {
-            let returns_result = self.everything_else.trim_end().ends_with("(())");
+            let returns_result = self.info.everything_else.trim_end().ends_with("(())");
             // Give each doctest main function a unique name.
             // This is for example needed for the tooling around `-C instrument-coverage`.
             let inner_fn_name = if let Some(test_id) = test_id {
@@ -712,13 +710,13 @@ impl DocTest {
 
             // add extra 4 spaces for each line to offset the code block
             let content = if opts.insert_indent_space {
-                self.everything_else
+                self.info.everything_else
                     .lines()
                     .map(|line| format!("    {}", line))
                     .collect::<Vec<String>>()
                     .join("\n")
             } else {
-                self.everything_else.to_string()
+                self.info.everything_else.to_string()
             };
             prog.extend([&main_pre, content.as_str(), &main_post].iter().cloned());
         }
@@ -857,11 +855,11 @@ impl DocTest {
             // We generate nothing else.
             writeln!(output, "mod {test_id} {{\n").unwrap();
         } else {
-            writeln!(output, "mod {test_id} {{\n{}", self.crates).unwrap();
+            writeln!(output, "mod {test_id} {{\n{}{}", self.info.mod_attrs, self.info.crates).unwrap();
             if self.main_fn_span.is_some() {
-                output.push_str(&self.everything_else);
+                output.push_str(&self.info.everything_else);
             } else {
-                let returns_result = if self.everything_else.trim_end().ends_with("(())") {
+                let returns_result = if self.info.everything_else.trim_end().ends_with("(())") {
                     "-> Result<(), impl core::fmt::Debug>"
                 } else {
                     ""
@@ -872,7 +870,7 @@ impl DocTest {
     fn main() {returns_result} {{
         {}
     }}",
-                    self.everything_else
+                    self.info.everything_else,
                 )
                 .unwrap();
             }
@@ -918,6 +916,33 @@ pub const TEST: test::TestDescAndFn = test::TestDescAndFn {{
     }
 }
 
+fn is_crate_attr(attr: &ast::MetaItem) -> Option<bool> {
+    let Some(ident) = attr.ident() else { return Some(false); };
+    match ident.name.as_str() {
+        "doc" => None,
+        "cfg_feature" => {
+            if let Some(list) = attr.meta_item_list() &&
+                let Some(ast::NestedMetaItem::MetaItem(item)) = list.iter().nth(1)
+            {
+                is_crate_attr(&item)
+            } else {
+                Some(false)
+            }
+        }
+        "crate_type" | "crate_name" => None,
+        "no_builtins" | "no_std" | "no_core" | "no_implicit_prelude" | "recursion_limit" | "type_length_limit" | "windows_subsystem" | "feature" | "debugger_visualizer" => Some(true),
+        _ => Some(false),
+    }
+}
+
+#[derive(Default)]
+struct DoctestInfo {
+    mod_attrs: String,
+    crate_attrs: String,
+    crates: String,
+    everything_else: String,
+}
+
 /// Transforms a test into code that can be compiled into a Rust binary, and returns the number of
 /// lines before the test code begins as well as if the output stream supports colors or not.
 pub(crate) fn make_test(
@@ -943,7 +968,7 @@ pub(crate) fn make_test(
         DirState::Temp(get_doctest_dir().expect("rustdoc needs a tempdir"))
     });
 
-    let (crate_attrs, everything_else, crates) = partition_source(&s, edition);
+    // let (crate_attrs, everything_else, crates) = partition_source(&s, edition);
     let mut supports_color = false;
     let crate_name = crate_name.map(|c| c.into_owned());
 
@@ -957,7 +982,6 @@ pub(crate) fn make_test(
             use rustc_span::source_map::FilePathMapping;
 
             let filename = FileName::anon_source_code(&s);
-            let source = format!("{crates}{everything_else}");
 
             // Any errors in parsing should also appear when the doctest is compiled for real, so just
             // send all the errors that librustc_ast emits directly into a `Sink` instead of stderr.
@@ -979,40 +1003,73 @@ pub(crate) fn make_test(
             let mut found_main = None;
             let mut found_extern_crate = crate_name.is_none();
             let mut found_macro = false;
+            let mut info = DoctestInfo::default();
 
-            let mut parser = match maybe_new_parser_from_source_str(&psess, filename, source) {
+            let mut parser = match maybe_new_parser_from_source_str(&psess, filename, s.clone()) {
                 Ok(p) => p,
                 Err(errs) => {
                     errs.into_iter().for_each(|err| err.cancel());
-                    return (found_main, found_extern_crate, found_macro);
+                    return (found_main, found_extern_crate, found_macro, info);
                 }
             };
+
+            let mut can_be_crate_attr = true;
 
             loop {
                 match parser.parse_item(ForceCollect::No) {
                     Ok(Some(item)) => {
-                        if found_main.is_none()
-                            && let ast::ItemKind::Fn(..) = item.kind
-                            && item.ident.name == sym::main
+                        if can_be_crate_attr
+                            && let ast::ItemKind::Mod(ast::Unsafe::No, ast::ModKind::Loaded(..)) = item.kind
                         {
-                            found_main = Some(item.span);
-                        }
-
-                        if let ast::ItemKind::ExternCrate(original) = item.kind {
-                            if !found_extern_crate && let Some(ref crate_name) = crate_name {
-                                found_extern_crate = match original {
-                                    Some(name) => name.as_str() == crate_name,
-                                    None => item.ident.as_str() == crate_name,
-                                };
+                            for attr in &item.attrs {
+                                let lo = item.span.lo().0 as usize;
+                                let hi = item.span.hi().0 as usize;
+                                let code = &s[lo..hi];
+                                if matches!(attr.style, ast::AttrStyle::Inner) &&
+                                    let Some(meta) = attr.meta()
+                                {
+                                    match is_crate_attr(&meta) {
+                                        Some(true) => {
+                                            info.crate_attrs.push_str(code);
+                                            info.crate_attrs.push('\n');
+                                        }
+                                        Some(false) => {
+                                            info.mod_attrs.push_str(code);
+                                            info.mod_attrs.push('\n');
+                                        }
+                                        // We ignore this attribute.
+                                        None => {}
+                                    }
+                                }
                             }
-                        }
+                        } else {
+                            can_be_crate_attr = false;
+                            if found_main.is_none()
+                                && let ast::ItemKind::Fn(..) = item.kind
+                                && item.ident.name == sym::main
+                            {
+                                found_main = Some(item.span);
+                            }
 
-                        if !found_macro && let ast::ItemKind::MacCall(..) = item.kind {
-                            found_macro = true;
-                        }
+                            let lo = item.span.lo().0 as usize;
+                            let hi = item.span.hi().0 as usize;
+                            if let ast::ItemKind::ExternCrate(original) = item.kind {
+                                if !found_extern_crate && let Some(ref crate_name) = crate_name {
+                                    found_extern_crate = match original {
+                                        Some(name) => name.as_str() == crate_name,
+                                        None => item.ident.as_str() == crate_name,
+                                    };
+                                }
+                                info.crates.push_str(&s[lo..hi]);
+                                info.crates.push('\n');
+                            } else {
+                                info.everything_else.push_str(&s[lo..hi]);
+                                info.everything_else.push('\n');
+                            }
 
-                        if found_main.is_some() && found_extern_crate {
-                            break;
+                            if !found_macro && let ast::ItemKind::MacCall(..) = item.kind {
+                                found_macro = true;
+                            }
                         }
                     }
                     Ok(None) => break,
@@ -1033,7 +1090,7 @@ pub(crate) fn make_test(
             // drop.
             psess.dcx.reset_err_count();
 
-            (found_main, found_extern_crate, found_macro)
+            (found_main, found_extern_crate, found_macro, info)
         })
     });
 
@@ -1042,16 +1099,13 @@ pub(crate) fn make_test(
         Ignore::None => false,
         Ignore::Some(ref ignores) => ignores.iter().any(|s| target_str.contains(s)),
     };
-    let Ok((mut main_fn_span, already_has_extern_crate, found_macro)) = result else {
+    let Ok((mut main_fn_span, already_has_extern_crate, found_macro, info)) = result else {
         // If the parser panicked due to a fatal error, pass the test code through unchanged.
         // The error will be reported during compilation.
         return DocTest {
             test_code: s,
             supports_color: false,
             main_fn_span: None,
-            crate_attrs,
-            crates,
-            everything_else,
             already_has_extern_crate: false,
             ignore,
             crate_name,
@@ -1065,6 +1119,7 @@ pub(crate) fn make_test(
             test_id,
             path,
             no_run,
+            info: DoctestInfo::default(),
         };
     };
 
@@ -1088,9 +1143,6 @@ pub(crate) fn make_test(
         test_code: s,
         supports_color,
         main_fn_span,
-        crate_attrs,
-        crates,
-        everything_else,
         already_has_extern_crate,
         ignore,
         crate_name,
@@ -1104,145 +1156,8 @@ pub(crate) fn make_test(
         test_id,
         path,
         no_run,
+        info,
     }
-}
-
-fn check_if_attr_is_complete(source: &str, edition: Edition) -> bool {
-    if source.is_empty() {
-        // Empty content so nothing to check in here...
-        return true;
-    }
-    rustc_driver::catch_fatal_errors(|| {
-        rustc_span::create_session_if_not_set_then(edition, |_| {
-            use rustc_errors::emitter::HumanEmitter;
-            use rustc_errors::DiagCtxt;
-            use rustc_span::source_map::FilePathMapping;
-
-            let filename = FileName::anon_source_code(source);
-            // Any errors in parsing should also appear when the doctest is compiled for real, so just
-            // send all the errors that librustc_ast emits directly into a `Sink` instead of stderr.
-            let sm = Lrc::new(SourceMap::new(FilePathMapping::empty()));
-            let fallback_bundle = rustc_errors::fallback_fluent_bundle(
-                rustc_driver::DEFAULT_LOCALE_RESOURCES.to_vec(),
-                false,
-            );
-
-            let emitter = HumanEmitter::new(Box::new(io::sink()), fallback_bundle);
-
-            let dcx = DiagCtxt::new(Box::new(emitter)).disable_warnings();
-            let psess = ParseSess::with_dcx(dcx, sm);
-            let mut parser =
-                match maybe_new_parser_from_source_str(&psess, filename, source.to_owned()) {
-                    Ok(p) => p,
-                    Err(errs) => {
-                        errs.into_iter().for_each(|err| err.cancel());
-                        // If there is an unclosed delimiter, an error will be returned by the
-                        // tokentrees.
-                        return false;
-                    }
-                };
-            // If a parsing error happened, it's very likely that the attribute is incomplete.
-            if let Err(e) = parser.parse_attribute(InnerAttrPolicy::Permitted) {
-                e.cancel();
-                return false;
-            }
-            true
-        })
-    })
-    .unwrap_or(false)
-}
-
-fn partition_source(s: &str, edition: Edition) -> (String, String, String) {
-    #[derive(Copy, Clone, PartialEq)]
-    enum PartitionState {
-        Attrs,
-        Crates,
-        Other,
-    }
-    let mut state = PartitionState::Attrs;
-    let mut before = String::new();
-    let mut crates = String::new();
-    let mut after = String::new();
-
-    let mut mod_attr_pending = String::new();
-
-    for line in s.lines() {
-        let trimline = line.trim();
-
-        // FIXME(misdreavus): if a doc comment is placed on an extern crate statement, it will be
-        // shunted into "everything else"
-        match state {
-            PartitionState::Attrs => {
-                state = if trimline.starts_with("#![") {
-                    if !check_if_attr_is_complete(line, edition) {
-                        mod_attr_pending = line.to_owned();
-                    } else {
-                        mod_attr_pending.clear();
-                    }
-                    PartitionState::Attrs
-                } else if trimline.chars().all(|c| c.is_whitespace())
-                    || (trimline.starts_with("//") && !trimline.starts_with("///"))
-                {
-                    PartitionState::Attrs
-                } else if trimline.starts_with("extern crate")
-                    || trimline.starts_with("#[macro_use] extern crate")
-                {
-                    PartitionState::Crates
-                } else {
-                    // First we check if the previous attribute was "complete"...
-                    if !mod_attr_pending.is_empty() {
-                        // If not, then we append the new line into the pending attribute to check
-                        // if this time it's complete...
-                        mod_attr_pending.push_str(line);
-                        if !trimline.is_empty()
-                            && check_if_attr_is_complete(&mod_attr_pending, edition)
-                        {
-                            // If it's complete, then we can clear the pending content.
-                            mod_attr_pending.clear();
-                        }
-                        // In any case, this is considered as `PartitionState::Attrs` so it's
-                        // prepended before rustdoc's inserts.
-                        PartitionState::Attrs
-                    } else {
-                        PartitionState::Other
-                    }
-                };
-            }
-            PartitionState::Crates => {
-                state = if trimline.starts_with("extern crate")
-                    || trimline.starts_with("#[macro_use] extern crate")
-                    || trimline.chars().all(|c| c.is_whitespace())
-                    || (trimline.starts_with("//") && !trimline.starts_with("///"))
-                {
-                    PartitionState::Crates
-                } else {
-                    PartitionState::Other
-                };
-            }
-            PartitionState::Other => {}
-        }
-
-        match state {
-            PartitionState::Attrs => {
-                before.push_str(line);
-                before.push('\n');
-            }
-            PartitionState::Crates => {
-                crates.push_str(line);
-                crates.push('\n');
-            }
-            PartitionState::Other => {
-                after.push_str(line);
-                after.push('\n');
-            }
-        }
-    }
-
-    debug!("before:\n{before}");
-    debug!("crates:\n{crates}");
-    debug!("after:\n{after}");
-
-    (before, after.trim().to_owned(), crates)
 }
 
 pub(crate) struct IndividualTestOptions {
@@ -1332,7 +1247,7 @@ impl DocTestRunner {
 
     fn add_test(&mut self, doctest: DocTest) {
         if !doctest.ignore {
-            for line in doctest.crate_attrs.split('\n') {
+            for line in doctest.info.crate_attrs.split('\n') {
                 self.crate_attrs.insert(line.to_string());
             }
         }
@@ -1431,7 +1346,7 @@ impl DocTestKinds {
             || doctest.lang_string.test_harness
             || rustdoc_options.nocapture
             || rustdoc_options.test_args.iter().any(|arg| arg == "--show-output")
-            || doctest.crate_attrs.contains("#![no_std]")
+            || doctest.info.crate_attrs.contains("#![no_std]")
         {
             self.standalone.push(doctest.generate_test_desc_and_fn(
                 opts,
