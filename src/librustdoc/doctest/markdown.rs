@@ -4,7 +4,7 @@ use std::fs::read_to_string;
 use std::sync::{Arc, Mutex};
 
 use rustc_session::config::Input;
-use rustc_span::FileName;
+use rustc_span::{FileName, Span};
 use tempfile::tempdir;
 
 use super::{
@@ -20,11 +20,18 @@ struct MdCollector {
 }
 
 impl DocTestVisitor for MdCollector {
-    fn visit_test(&mut self, test: String, config: LangString, rel_line: MdRelLine) {
+    fn visit_test(&mut self, test: String, config: LangString, rel_line: MdRelLine, span: Span) {
         let filename = self.filename.clone();
         // First line of Markdown is line 1.
         let line = 1 + rel_line.offset();
-        self.tests.push(ScrapedDocTest::new(filename, line, self.cur_path.clone(), config, test));
+        self.tests.push(ScrapedDocTest::new(
+            filename,
+            line,
+            self.cur_path.clone(),
+            config,
+            test,
+            span,
+        ));
     }
 
     fn visit_header(&mut self, name: &str, level: u32) {
@@ -117,7 +124,7 @@ pub(crate) fn test(input: &Input, options: Options) -> Result<(), String> {
     let CreateRunnableDocTests { opts, rustdoc_options, standalone_tests, mergeable_tests, .. } =
         collector;
     crate::doctest::run_tests(
-        opts,
+        &opts,
         &rustdoc_options,
         &Arc::new(Mutex::new(Vec::new())),
         standalone_tests,

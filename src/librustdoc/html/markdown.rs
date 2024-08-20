@@ -44,7 +44,7 @@ use rustc_middle::ty::TyCtxt;
 pub(crate) use rustc_resolve::rustdoc::main_body_opts;
 use rustc_resolve::rustdoc::may_be_doc_link;
 use rustc_span::edition::Edition;
-use rustc_span::{Span, Symbol};
+use rustc_span::{Span, Symbol, DUMMY_SP};
 use tracing::{debug, trace};
 
 use crate::clean::RenderedLink;
@@ -730,7 +730,17 @@ pub(crate) fn find_codes<T: doctest::DocTestVisitor>(
                     nb_lines -= 1;
                 }
                 let line = MdRelLine::new(nb_lines);
-                tests.visit_test(text, block_info, line);
+                tests.visit_test(
+                    text,
+                    block_info,
+                    line,
+                    extra_info
+                        .map(|info| {
+                            let parent_mod_id = info.tcx.parent_module_from_def_id(info.def_id);
+                            crate::clean::rustc_span(parent_mod_id.to_def_id(), info.tcx).inner()
+                        })
+                        .unwrap_or(DUMMY_SP),
+                );
                 prev_offset = offset.start;
             }
             Event::Start(Tag::Heading { level, .. }) => {
@@ -799,6 +809,8 @@ pub(crate) struct LangString {
     pub(crate) edition: Option<Edition>,
     pub(crate) added_classes: Vec<String>,
     pub(crate) unknown: Vec<String>,
+    /// This field is an option to allow us to know if the value was provided by the doctest.
+    pub(crate) unit_test: Option<bool>,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
@@ -1121,6 +1133,7 @@ impl Default for LangString {
             edition: None,
             added_classes: Vec::new(),
             unknown: Vec::new(),
+            unit_test: None,
         }
     }
 }
@@ -1192,6 +1205,14 @@ impl LangString {
                     }
                     LangStringToken::LangToken(x) if x.starts_with("edition") => {
                         data.edition = x[7..].parse::<Edition>().ok();
+                    }
+                    LangStringToken::LangToken("internal") => {
+                        data.unit_test = Some(true);
+                        seen_rust_tags = !seen_other_tags || seen_rust_tags;
+                    }
+                    LangStringToken::LangToken("external") => {
+                        data.unit_test = Some(false);
+                        seen_rust_tags = !seen_other_tags || seen_rust_tags;
                     }
                     LangStringToken::LangToken(x)
                         if x.starts_with("rust") && x[4..].parse::<Edition>().is_ok() =>

@@ -9,6 +9,7 @@ use rustc_hir as hir;
 use rustc_middle::lint::LintLevelSource;
 use rustc_session::lint;
 use tracing::debug;
+use rustc_span::Span;
 
 use super::Pass;
 use crate::clean;
@@ -47,7 +48,7 @@ pub(crate) struct Tests {
 }
 
 impl crate::doctest::DocTestVisitor for Tests {
-    fn visit_test(&mut self, _: String, config: LangString, _: MdRelLine) {
+    fn visit_test(&mut self, _: String, config: LangString, _: MdRelLine, _: Span) {
         if config.rust && config.ignore == Ignore::None {
             self.found_tests += 1;
         }
