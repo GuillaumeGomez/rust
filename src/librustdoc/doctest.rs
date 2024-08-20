@@ -23,7 +23,7 @@ use rustc_session::config::{self, CrateType, ErrorOutputType};
 use rustc_session::lint;
 use rustc_span::edition::Edition;
 use rustc_span::symbol::sym;
-use rustc_span::FileName;
+use rustc_span::{FileName, Span};
 use rustc_target::spec::{Target, TargetTriple};
 use tempfile::{Builder as TempFileBuilder, TempDir};
 
@@ -166,6 +166,7 @@ pub(crate) fn run(dcx: DiagCtxtHandle<'_>, options: RustdocOptions) -> Result<()
     let CreateRunnableDocTests {
         standalone_tests,
         mergeable_tests,
+        unit_tests,
         rustdoc_options,
         opts,
         unused_extern_reports,
@@ -200,7 +201,8 @@ pub(crate) fn run(dcx: DiagCtxtHandle<'_>, options: RustdocOptions) -> Result<()
         })
     })?;
 
-    run_tests(opts, &rustdoc_options, &unused_extern_reports, standalone_tests, mergeable_tests);
+    run_tests(&opts, &rustdoc_options, &unused_extern_reports, standalone_tests, mergeable_tests);
+    run_unit_tests(opts, &rustdoc_options, &unused_extern_reports, unit_tests);
 
     let compiling_test_count = compiling_test_count.load(Ordering::SeqCst);
 
@@ -246,7 +248,7 @@ pub(crate) fn run(dcx: DiagCtxtHandle<'_>, options: RustdocOptions) -> Result<()
 }
 
 pub(crate) fn run_tests(
-    opts: GlobalTestOptions,
+    opts: &GlobalTestOptions,
     rustdoc_options: &Arc<RustdocOptions>,
     unused_extern_reports: &Arc<Mutex<Vec<UnusedExterns>>>,
     mut standalone_tests: Vec<test::TestDescAndFn>,
@@ -283,7 +285,7 @@ pub(crate) fn run_tests(
         if let Ok(success) = tests_runner.run_merged_tests(
             rustdoc_test_options,
             edition,
-            &opts,
+            opts,
             &test_args,
             rustdoc_options,
         ) {
@@ -300,7 +302,7 @@ pub(crate) fn run_tests(
             doctest.generate_unique_doctest(
                 &scraped_test.text,
                 scraped_test.langstr.test_harness,
-                &opts,
+                opts,
                 Some(&opts.crate_name),
             );
             standalone_tests.push(generate_test_desc_and_fn(
@@ -322,6 +324,28 @@ pub(crate) fn run_tests(
     if nb_errors != 0 {
         // libtest::ERROR_EXIT_CODE is not public but it's the same value.
         std::process::exit(101);
+    }
+}
+
+pub(crate) fn run_unit_tests(
+    _opts: GlobalTestOptions,
+    _rustdoc_options: &Arc<RustdocOptions>,
+    _unused_extern_reports: &Arc<Mutex<Vec<UnusedExterns>>>,
+    unit_tests: Vec<(DocTestBuilder, ScrapedDocTest)>,
+) {
+    if unit_tests.is_empty() {
+        return;
+    }
+    let mut file_map: FxHashMap<&FileName, Vec<&(DocTestBuilder, ScrapedDocTest)>> =
+        FxHashMap::default();
+
+    for unit_test in &unit_tests {
+        file_map.entry(&unit_test.1.filename).or_default().push(unit_test);
+    }
+    // Now we sort all unit tests by their parent module span: the biggest must come first as we
+    // want to modify the files by adding new content closer to the end of the file.
+    for value in file_map.values_mut() {
+        value.sort_unstable_by(|(_, a), (_, b)| b.span.cmp(&a.span));
     }
 }
 
@@ -723,6 +747,7 @@ pub(crate) struct ScrapedDocTest {
     langstr: LangString,
     text: String,
     name: String,
+    span: Span,
 }
 
 impl ScrapedDocTest {
@@ -732,6 +757,7 @@ impl ScrapedDocTest {
         logical_path: Vec<String>,
         langstr: LangString,
         text: String,
+        span: Span,
     ) -> Self {
         let mut item_path = logical_path.join("::");
         item_path.retain(|c| c != ' ');
@@ -741,7 +767,7 @@ impl ScrapedDocTest {
         let name =
             format!("{} - {item_path}(line {line})", filename.prefer_remapped_unconditionaly());
 
-        Self { filename, line, langstr, text, name }
+        Self { filename, line, langstr, text, name, span }
     }
     fn edition(&self, opts: &RustdocOptions) -> Edition {
         self.langstr.edition.unwrap_or(opts.edition)
@@ -766,13 +792,14 @@ impl ScrapedDocTest {
 }
 
 pub(crate) trait DocTestVisitor {
-    fn visit_test(&mut self, test: String, config: LangString, rel_line: MdRelLine);
+    fn visit_test(&mut self, test: String, config: LangString, rel_line: MdRelLine, span: Span);
     fn visit_header(&mut self, _name: &str, _level: u32) {}
 }
 
 struct CreateRunnableDocTests {
     standalone_tests: Vec<test::TestDescAndFn>,
     mergeable_tests: FxHashMap<Edition, Vec<(DocTestBuilder, ScrapedDocTest)>>,
+    unit_tests: Vec<(DocTestBuilder, ScrapedDocTest)>,
 
     rustdoc_options: Arc<RustdocOptions>,
     opts: GlobalTestOptions,
@@ -788,6 +815,7 @@ impl CreateRunnableDocTests {
         CreateRunnableDocTests {
             standalone_tests: Vec::new(),
             mergeable_tests: FxHashMap::default(),
+            unit_tests: Vec::new(),
             rustdoc_options: Arc::new(rustdoc_options),
             opts,
             visited_tests: FxHashMap::default(),
@@ -798,6 +826,12 @@ impl CreateRunnableDocTests {
     }
 
     fn add_test(&mut self, scraped_test: ScrapedDocTest) {
+        let is_unit_test = match (self.rustdoc_options.bin_crate, scraped_test.langstr.unit_test) {
+            (true, None | Some(true)) => true,
+            (false, None | Some(false)) => false,
+            (_, Some(unit_test)) => unit_test,
+        };
+
         // For example `module/file.rs` would become `module_file_rs`
         let file = scraped_test
             .filename
@@ -829,17 +863,21 @@ impl CreateRunnableDocTests {
             Some(test_id),
             Some(&scraped_test.langstr),
         );
-        let is_standalone = !doctest.can_be_merged
-            || scraped_test.langstr.compile_fail
-            || scraped_test.langstr.test_harness
-            || scraped_test.langstr.standalone
-            || self.rustdoc_options.nocapture
-            || self.rustdoc_options.test_args.iter().any(|arg| arg == "--show-output");
-        if is_standalone {
-            let test_desc = self.generate_test_desc_and_fn(doctest, scraped_test);
-            self.standalone_tests.push(test_desc);
+        if is_unit_test {
+            self.unit_tests.push((doctest, scraped_test));
         } else {
-            self.mergeable_tests.entry(edition).or_default().push((doctest, scraped_test));
+            let is_standalone = !doctest.can_be_merged
+                || scraped_test.langstr.compile_fail
+                || scraped_test.langstr.test_harness
+                || scraped_test.langstr.standalone
+                || self.rustdoc_options.nocapture
+                || self.rustdoc_options.test_args.iter().any(|arg| arg == "--show-output");
+            if is_standalone {
+                let test_desc = self.generate_test_desc_and_fn(doctest, scraped_test);
+                self.standalone_tests.push(test_desc);
+            } else {
+                self.mergeable_tests.entry(edition).or_default().push((doctest, scraped_test));
+            }
         }
     }
 
@@ -994,7 +1032,7 @@ fn doctest_run_fn(
 
 #[cfg(test)] // used in tests
 impl DocTestVisitor for Vec<usize> {
-    fn visit_test(&mut self, _test: String, _config: LangString, rel_line: MdRelLine) {
+    fn visit_test(&mut self, _test: String, _config: LangString, rel_line: MdRelLine, _: Span) {
         self.push(1 + rel_line.offset());
     }
 }
