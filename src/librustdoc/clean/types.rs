@@ -5,6 +5,7 @@ use std::{fmt, iter};
 
 use arrayvec::ArrayVec;
 use rustc_abi::{ExternAbi, VariantIdx};
+use rustc_ast::ast::{LitKind, MetaItemInner, MetaItemKind};
 use rustc_attr_parsing::{AttributeKind, ConstStability, Deprecation, Stability, StableSince};
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet};
 use rustc_hir::def::{CtorKind, DefKind, Res};
@@ -479,7 +480,7 @@ impl Item {
             name,
             kind,
             Attributes::from_hir(hir_attrs),
-            extract_cfg_from_attrs(hir_attrs.iter(), cx.tcx, &cx.cache.hidden_cfg),
+            extract_cfg_from_attrs(hir_attrs.iter(), cx.tcx, &mut cx.cache.cfg_info.borrow_mut()),
         )
     }
 
@@ -1017,14 +1018,63 @@ pub(crate) fn hir_attr_lists<'a, I: IntoIterator<Item = &'a hir::Attribute>>(
         .flatten()
 }
 
+#[derive(Clone)]
+pub(crate) struct CfgInfo {
+    hidden_cfg: FxHashSet<Cfg>,
+    doc_auto_cfg_active: bool,
+}
+
+impl Default for CfgInfo {
+    fn default() -> Self {
+        Self {
+            hidden_cfg: [
+                Cfg::Cfg(sym::test, None),
+                Cfg::Cfg(sym::doc, None),
+                Cfg::Cfg(sym::doctest, None),
+            ]
+            .into_iter()
+            .collect(),
+            doc_auto_cfg_active: true,
+        }
+    }
+}
+
+fn handle_auto_cfg_hide_show(
+    tcx: TyCtxt<'_>,
+    cfg_info: &mut CfgInfo,
+    sub_attr: &MetaItemInner,
+    is_show: bool,
+) {
+    if let MetaItemInner::MetaItem(item) = sub_attr
+        && let MetaItemKind::List(items) = &item.kind
+    {
+        for item in items {
+            match Cfg::parse(item) {
+                Ok(cfg) => {
+                    if is_show {
+                        cfg_info.hidden_cfg.remove(&cfg);
+                    } else {
+                        cfg_info.hidden_cfg.insert(cfg);
+                    }
+                }
+                Err(_) => {
+                    tcx.sess
+                        .dcx()
+                        .struct_span_err(sub_attr.span(), "unexpected `auto_cfg` value")
+                        .emit();
+                }
+            }
+        }
+    } else {
+        tcx.sess.dcx().struct_span_err(sub_attr.span(), "unexpected `auto_cfg` value kind").emit();
+    }
+}
+
 pub(crate) fn extract_cfg_from_attrs<'a, I: Iterator<Item = &'a hir::Attribute> + Clone>(
     attrs: I,
     tcx: TyCtxt<'_>,
-    hidden_cfg: &FxHashSet<Cfg>,
+    cfg_info: &mut CfgInfo,
 ) -> Option<Arc<Cfg>> {
-    let doc_cfg_active = tcx.features().doc_cfg();
-    let doc_auto_cfg_active = tcx.features().doc_auto_cfg();
-
     fn single<T: IntoIterator>(it: T) -> Option<T::Item> {
         let mut iter = it.into_iter();
         let item = iter.next()?;
@@ -1034,63 +1084,163 @@ pub(crate) fn extract_cfg_from_attrs<'a, I: Iterator<Item = &'a hir::Attribute> 
         Some(item)
     }
 
-    let mut cfg = if doc_cfg_active || doc_auto_cfg_active {
-        let mut doc_cfg = attrs
-            .clone()
-            .filter(|attr| attr.has_name(sym::doc))
-            .flat_map(|attr| attr.meta_item_list().unwrap_or_default())
-            .filter(|attr| attr.has_name(sym::cfg))
-            .peekable();
-        if doc_cfg.peek().is_some() && doc_cfg_active {
-            let sess = tcx.sess;
-            doc_cfg.fold(Cfg::True, |mut cfg, item| {
-                if let Some(cfg_mi) =
-                    item.meta_item().and_then(|item| rustc_expand::config::parse_cfg(item, sess))
+    let mut enable_auto_cfg = true;
+    let mut cfg = Cfg::True;
+
+    let mut doc_cfg = attrs
+        .clone()
+        .filter(|attr| attr.has_name(sym::doc))
+        .flat_map(|attr| attr.meta_item_list().unwrap_or_default())
+        .filter(|attr| attr.has_name(sym::cfg))
+        .peekable();
+    if doc_cfg.peek().is_some() {
+        let sess = tcx.sess;
+        cfg = doc_cfg.fold(Cfg::True, |mut cfg, item| {
+            if let Some(cfg_mi) =
+                item.meta_item().and_then(|item| rustc_expand::config::parse_cfg(item, sess))
+            {
+                // The result is unused here but we can gate unstable predicates
+                rustc_attr_parsing::cfg_matches(
+                    cfg_mi,
+                    tcx.sess,
+                    rustc_ast::CRATE_NODE_ID,
+                    Some(tcx.features()),
+                );
+                match Cfg::parse(cfg_mi) {
+                    Ok(new_cfg) => cfg &= new_cfg,
+                    Err(e) => {
+                        sess.dcx().span_err(e.span, e.msg);
+                    }
+                }
+            }
+            cfg
+        });
+        enable_auto_cfg = false;
+    }
+    let mut changed_auto_active_status = None;
+
+    // If there is no `doc(cfg())`, then we retrieve the `cfg()` attributes (because
+    // `doc(cfg())` overrides `cfg()`).
+    'main: for attr in attrs {
+        let Some(ident) = attr.ident() else { continue };
+        match ident.name {
+            sym::cfg if enable_auto_cfg => {
+                if let Some(attr) = single(attr.meta_item_list()?)
+                    && let Some(new_cfg) =
+                        Cfg::parse_without(attr.meta_item()?, &cfg_info.hidden_cfg).ok().flatten()
                 {
-                    // The result is unused here but we can gate unstable predicates
-                    rustc_attr_parsing::cfg_matches(
-                        cfg_mi,
-                        tcx.sess,
-                        rustc_ast::CRATE_NODE_ID,
-                        Some(tcx.features()),
-                    );
-                    match Cfg::parse(cfg_mi) {
-                        Ok(new_cfg) => cfg &= new_cfg,
-                        Err(e) => {
-                            sess.dcx().span_err(e.span, e.msg);
+                    cfg &= new_cfg;
+                }
+            }
+            // treat #[target_feature(enable = "feat")] attributes as if they were
+            // #[doc(cfg(target_feature = "feat"))] attributes as well
+            sym::target_feature if let Some(attrs) = attr.meta_item_list() => {
+                for attr in attrs {
+                    if attr.has_name(sym::enable) && attr.value_str().is_some() {
+                        // Clone `enable = "feat"`, change to `target_feature = "feat"`.
+                        // Unwrap is safe because `value_str` succeeded above.
+                        let mut meta = attr.meta_item().unwrap().clone();
+                        meta.path =
+                            ast::Path::from_ident(Ident::with_dummy_span(sym::target_feature));
+
+                        if let Ok(feat_cfg) = Cfg::parse(&ast::MetaItemInner::MetaItem(meta)) {
+                            cfg &= feat_cfg;
                         }
                     }
                 }
-                cfg
-            })
-        } else if doc_auto_cfg_active {
-            // If there is no `doc(cfg())`, then we retrieve the `cfg()` attributes (because
-            // `doc(cfg())` overrides `cfg()`).
-            attrs
-                .clone()
-                .filter(|attr| attr.has_name(sym::cfg_trace))
-                .filter_map(|attr| single(attr.meta_item_list()?))
-                .filter_map(|attr| Cfg::parse_without(attr.meta_item()?, hidden_cfg).ok().flatten())
-                .fold(Cfg::True, |cfg, new_cfg| cfg & new_cfg)
-        } else {
-            Cfg::True
-        }
-    } else {
-        Cfg::True
-    };
-
-    // treat #[target_feature(enable = "feat")] attributes as if they were
-    // #[doc(cfg(target_feature = "feat"))] attributes as well
-    for attr in hir_attr_lists(attrs, sym::target_feature) {
-        if attr.has_name(sym::enable) && attr.value_str().is_some() {
-            // Clone `enable = "feat"`, change to `target_feature = "feat"`.
-            // Unwrap is safe because `value_str` succeeded above.
-            let mut meta = attr.meta_item().unwrap().clone();
-            meta.path = ast::Path::from_ident(Ident::with_dummy_span(sym::target_feature));
-
-            if let Ok(feat_cfg) = Cfg::parse(&ast::MetaItemInner::MetaItem(meta)) {
-                cfg &= feat_cfg;
             }
+            sym::doc if let Some(attrs) = attr.meta_item_list() => {
+                for attr in attrs.iter().filter(|attr| attr.has_name(sym::auto_cfg)) {
+                    let MetaItemInner::MetaItem(attr) = attr else {
+                        tcx.sess
+                            .dcx()
+                            .struct_span_err(
+                                attr.span(),
+                                "unexpected value in `auto_cfg` attribute",
+                            )
+                            .emit();
+                        break 'main;
+                    };
+                    match &attr.kind {
+                        MetaItemKind::Word => {
+                            if let Some(first_change) = changed_auto_active_status {
+                                if !cfg_info.doc_auto_cfg_active {
+                                    tcx.sess.dcx().struct_span_err(vec![first_change, attr.span], "`auto_cfg` was disabled and enabled more than once on the same item").emit();
+                                    break 'main;
+                                }
+                            } else {
+                                changed_auto_active_status = Some(attr.span);
+                            }
+                            cfg_info.doc_auto_cfg_active = true;
+                        }
+                        MetaItemKind::NameValue(lit) => {
+                            if let LitKind::Bool(value) = lit.kind {
+                                if let Some(first_change) = changed_auto_active_status {
+                                    if cfg_info.doc_auto_cfg_active != value {
+                                        tcx.sess.dcx().struct_span_err(vec![first_change, attr.span], "`auto_cfg` was disabled and enabled more than once on the same item").emit();
+                                        break 'main;
+                                    }
+                                } else {
+                                    changed_auto_active_status = Some(attr.span);
+                                }
+                                cfg_info.doc_auto_cfg_active = value;
+                            } else {
+                                tcx.sess
+                                    .dcx()
+                                    .struct_span_err(
+                                        attr.span,
+                                        "unexpected value for `auto_cfg` attribute",
+                                    )
+                                    .emit();
+                            }
+                        }
+                        MetaItemKind::List(sub_attrs) => {
+                            if let Some(first_change) = changed_auto_active_status {
+                                if !cfg_info.doc_auto_cfg_active {
+                                    tcx.sess.dcx().struct_span_err(vec![first_change, attr.span], "`auto_cfg` was disabled and enabled more than once on the same item").emit();
+                                    break 'main;
+                                }
+                            } else {
+                                changed_auto_active_status = Some(attr.span);
+                            }
+                            // Whatever happens next, the feature is enabled again.
+                            cfg_info.doc_auto_cfg_active = true;
+                            for sub_attr in sub_attrs.iter() {
+                                let Some(ident) = sub_attr.ident() else {
+                                    tcx.sess
+                                        .dcx()
+                                        .struct_span_err(
+                                            attr.span,
+                                            "unexpected value for `auto_cfg` attribute",
+                                        )
+                                        .emit();
+                                    continue;
+                                };
+                                if ident.name == sym::show || ident.name == sym::hide {
+                                    handle_auto_cfg_hide_show(
+                                        tcx,
+                                        cfg_info,
+                                        &sub_attr,
+                                        ident.name == sym::show,
+                                    );
+                                } else {
+                                    tcx.sess
+                                        .dcx()
+                                        .struct_span_err(
+                                            attr.span,
+                                            format!(
+                                                "unknown value `{}` for `auto_cfg` attribute",
+                                                ident.name
+                                            ),
+                                        )
+                                        .emit();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

@@ -3,7 +3,6 @@
 use std::env;
 use std::sync::Arc;
 
-use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::{CRATE_DEF_ID, LocalDefId};
 use rustc_hir::{self as hir, CRATE_HIR_ID, intravisit};
 use rustc_middle::hir::nested_filter;
@@ -96,9 +95,11 @@ impl HirCollector<'_> {
         nested: F,
     ) {
         let ast_attrs = self.tcx.hir_attrs(self.tcx.local_def_id_to_hir_id(def_id));
-        if let Some(ref cfg) =
-            extract_cfg_from_attrs(ast_attrs.iter(), self.tcx, &FxHashSet::default())
-            && !cfg.matches(&self.tcx.sess.psess)
+        if let Some(ref cfg) = extract_cfg_from_attrs(
+            ast_attrs.iter(),
+            self.tcx,
+            &mut crate::clean::CfgInfo::default(),
+        ) && !cfg.matches(&self.tcx.sess.psess)
         {
             return;
         }
