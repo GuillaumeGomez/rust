@@ -204,7 +204,7 @@ fn generate_item_with_correct_attrs(
             Cow::Owned(attr) => attr,
         }),
         cx.tcx,
-        &cx.cache.hidden_cfg,
+        &cx.cache.cfg_info.borrow_mut(),
     );
     let attrs = Attributes::from_hir_iter(attrs.iter().map(|(attr, did)| (&**attr, *did)), false);
 
