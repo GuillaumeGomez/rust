@@ -1,0 +1,29 @@
+error: casting a function into an integer implicitly
+  --> $DIR/function_casts_as_integer.rs:9:17
+   |
+LL |     let x = foo as usize;
+   |                 ^^^^^^^^
+   |
+note: the lint level is defined here
+  --> $DIR/function_casts_as_integer.rs:3:9
+   |
+LL | #![deny(function_casts_as_integer)]
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+help: add `fn() as usize`
+   |
+LL |     let x = foo as fn() as usize;
+   |                 +++++++
+
+error: casting a function into an integer implicitly
+  --> $DIR/function_casts_as_integer.rs:10:25
+   |
+LL |     let x = String::len as usize;
+   |                         ^^^^^^^^
+   |
+help: add `for<'a> fn(&'a String) -> usize as usize`
+   |
+LL |     let x = String::len as for<'a> fn(&'a String) -> usize as usize;
+   |                         ++++++++++++++++++++++++++++++++++
+
+error: aborting due to 2 previous errors
+
