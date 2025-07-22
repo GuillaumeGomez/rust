@@ -359,8 +359,7 @@ pub(crate) fn run_tests(
     if nb_errors != 0 {
         // We ensure temp dir destructor is called.
         std::mem::drop(temp_dir);
-        // libtest::ERROR_EXIT_CODE is not public but it's the same value.
-        std::process::exit(101);
+        std::process::exit(test::ERROR_EXIT_CODE);
     }
 }
 
