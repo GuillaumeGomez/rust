@@ -359,7 +359,9 @@ pub(crate) fn run_tests(
     if nb_errors != 0 {
         // We ensure temp dir destructor is called.
         std::mem::drop(temp_dir);
-        std::process::exit(test::ERROR_EXIT_CODE);
+        // FIXME(GuillaumeGomez): Uncomment the next line once #144297 has been merged.
+        // std::process::exit(test::ERROR_EXIT_CODE);
+        std::process::exit(101);
     }
 }
 
