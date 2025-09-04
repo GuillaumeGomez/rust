@@ -68,11 +68,6 @@ pub(super) fn lint(
     run_eslint(outdir, &files_to_check, librustdoc_path.join("html/static"))?;
 
     run_eslint(outdir, &[tools_path.join("rustdoc-js/tester.js")], tools_path.join("rustdoc-js"))?;
-    run_eslint(
-        outdir,
-        &[tools_path.join("rustdoc-gui/tester.js")],
-        tools_path.join("rustdoc-gui"),
-    )?;
     Ok(())
 }
 
