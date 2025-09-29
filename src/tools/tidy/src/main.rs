@@ -159,6 +159,7 @@ fn main() {
             features::check(&src_path, &tests_path, &compiler_path, &library_path, diag_ctx.clone())
         };
         check!(unstable_book, &src_path, collected);
+        check!(error_messages, &root_path);
 
         check!(
             extra_checks,
