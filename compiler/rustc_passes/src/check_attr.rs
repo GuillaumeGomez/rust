@@ -18,7 +18,9 @@ use rustc_feature::{
     ACCEPTED_LANG_FEATURES, AttributeDuplicates, AttributeType, BUILTIN_ATTRIBUTE_MAP,
     BuiltinAttribute,
 };
-use rustc_hir::attrs::{AttributeKind, InlineAttr, MirDialect, MirPhase, ReprAttr, SanitizerSet};
+use rustc_hir::attrs::{
+    AttributeKind, DocAttribute, InlineAttr, MirDialect, MirPhase, ReprAttr, SanitizerSet,
+};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::LocalModDefId;
 use rustc_hir::intravisit::{self, Visitor};
@@ -837,57 +839,6 @@ impl<'tcx> CheckAttrVisitor<'tcx> {
             self.check_doc_alias_value(meta, doc_alias, hir_id, target, false, aliases)
         } else {
             self.dcx().emit_err(errors::DocAliasMalformed { span: meta.span() });
-        }
-    }
-
-    fn check_doc_keyword_and_attribute(
-        &self,
-        span: Span,
-        hir_id: HirId,
-        attr_kind: DocFakeItemKind,
-    ) {
-        fn is_doc_keyword(s: Symbol) -> bool {
-            // FIXME: Once rustdoc can handle URL conflicts on case insensitive file systems, we
-            // can remove the `SelfTy` case here, remove `sym::SelfTy`, and update the
-            // `#[doc(keyword = "SelfTy")` attribute in `library/std/src/keyword_docs.rs`.
-            s.is_reserved(|| edition::LATEST_STABLE_EDITION) || s.is_weak() || s == sym::SelfTy
-        }
-
-        let item_kind = match self.tcx.hir_node(hir_id) {
-            hir::Node::Item(item) => Some(&item.kind),
-            _ => None,
-        };
-        match item_kind {
-            Some(ItemKind::Mod(_, module)) => {
-                if !module.item_ids.is_empty() {
-                    self.dcx()
-                        .emit_err(errors::DocKeywordEmptyMod { span, attr_name: attr_kind.name() });
-                    return;
-                }
-            }
-            _ => {
-                self.dcx().emit_err(errors::DocKeywordNotMod { span, attr_name: attr_kind.name() });
-                return;
-            }
-        }
-
-        match attr_kind {
-            DocFakeItemKind::Keyword => {
-                if !is_doc_keyword(value) {
-                    self.dcx().emit_err(errors::DocKeywordNotKeyword {
-                        span: meta.name_value_literal_span().unwrap_or_else(|| meta.span()),
-                        keyword: value,
-                    });
-                }
-            }
-            DocFakeItemKind::Attribute => {
-                if !is_builtin_attr(value) {
-                    self.dcx().emit_err(errors::DocAttributeNotAttribute {
-                        span: meta.name_value_literal_span().unwrap_or_else(|| meta.span()),
-                        attribute: value,
-                    });
-                }
-            }
         }
     }
 

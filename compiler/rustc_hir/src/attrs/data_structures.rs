@@ -392,6 +392,9 @@ pub enum DocInline {
 
 #[derive(Clone, Debug, HashStable_Generic, Encodable, Decodable, PrintAttribute)]
 pub struct DocAttribute {
+    /// `/// doc` or `#[doc = "doc"]`.
+    pub value: ThinVec<(Symbol, Span)>,
+
     pub aliases: FxIndexMap<Symbol, Span>,
     pub hidden: Option<Span>,
     pub inline: Option<(DocInline, Span)>,
@@ -403,6 +406,7 @@ pub struct DocAttribute {
     // builtin
     pub fake_variadic: Option<Span>,
     pub keyword: Option<(Symbol, Span)>,
+    pub attribute: Option<(Symbol, Span)>,
     pub masked: Option<Span>,
     pub notable_trait: Option<Span>,
     pub search_unbox: Option<Span>,
@@ -417,13 +421,14 @@ pub struct DocAttribute {
     pub rust_logo: Option<Span>,
 
     // #[doc(test(...))]
-    pub test_attrs: ThinVec<()>,
+    pub test_attrs: ThinVec<Span>,
     pub no_crate_inject: Option<Span>,
 }
 
 impl Default for DocAttribute {
     fn default() -> Self {
         Self {
+            value: ThinVec::new(),
             aliases: FxIndexMap::default(),
             hidden: None,
             inline: None,
@@ -431,6 +436,7 @@ impl Default for DocAttribute {
             cfg_hide: None,
             fake_variadic: None,
             keyword: None,
+            attribute: None,
             masked: None,
             notable_trait: None,
             search_unbox: None,

@@ -156,6 +156,8 @@ attribute_parsers!(
         BodyStabilityParser,
         ConfusablesParser,
         ConstStabilityParser,
+        DocParser,
+        MacroUseParser,
 
         NakedParser,
         StabilityParser,

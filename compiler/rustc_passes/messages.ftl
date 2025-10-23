@@ -117,10 +117,6 @@ passes_doc_alias_not_string_literal =
 passes_doc_attr_not_crate_level =
     `#![doc({$attr_name} = "...")]` isn't allowed as a crate-level attribute
 
-passes_doc_attribute_not_attribute =
-    nonexistent builtin attribute `{$attribute}` used in `#[doc(attribute = "...")]`
-    .help = only existing builtin attributes are allowed in core/std
-
 passes_doc_auto_cfg_expects_hide_or_show =
     only `hide` or `show` are allowed in `#[doc(auto_cfg(...))]`
 

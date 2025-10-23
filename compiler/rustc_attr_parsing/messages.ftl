@@ -287,6 +287,10 @@ attr_parsing_doc_keyword_not_keyword =
     nonexistent keyword `{$keyword}` used in `#[doc(keyword = "...")]`
     .help = only existing keywords are allowed in core/std
 
+attr_parsing_doc_attribute_not_attribute =
+    nonexistent builtin attribute `{$attribute}` used in `#[doc(attribute = "...")]`
+    .help = only existing builtin attributes are allowed in core/std
+
 attr_parsing_doc_inline_conflict =
     conflicting doc inlining attributes
     .help = remove one of the conflicting attributes
