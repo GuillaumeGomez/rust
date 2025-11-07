@@ -798,6 +798,9 @@ fn get_real_ident_class(text: &str, allow_path_keywords: bool) -> Option<Class> 
     })
 }
 
+/// Used to know if a keyword followed by a `!` should never be treated as a macro.
+const KEYWORDS_FOLLOWABLE_BY_VALUE: &[&str] = &["if", "while", "match", "break", "return"];
+
 /// This iterator comes from the same idea than "Peekable" except that it allows to "peek" more than
 /// just the next item by using `peek_next`. The `peek` method always returns the next item after
 /// the current one whereas `peek_next` will return the next item after the last one peeked.
@@ -1017,6 +1020,19 @@ impl<'src> Classifier<'src> {
         }
     }
 
+    fn new_macro_span(
+        &mut self,
+        text: &'src str,
+        sink: &mut dyn FnMut(Span, Highlight<'src>),
+        before: u32,
+        file_span: Span,
+    ) {
+        self.in_macro = true;
+        let span = new_span(before, text, file_span);
+        sink(DUMMY_SP, Highlight::EnterSpan { class: Class::Macro(span) });
+        sink(span, Highlight::Token { text, class: None });
+    }
+
     /// Single step of highlighting. This will classify `token`, but maybe also a couple of
     /// following ones as well.
     ///
@@ -1223,17 +1239,18 @@ impl<'src> Classifier<'src> {
                 LiteralKind::Float { .. } | LiteralKind::Int { .. } => Class::Number,
             },
             TokenKind::GuardedStrPrefix => return no_highlight(sink),
-            TokenKind::Ident | TokenKind::RawIdent
-                if self.peek_non_whitespace() == Some(TokenKind::Bang) =>
-            {
-                self.in_macro = true;
-                let span = new_span(before, text, file_span);
-                sink(DUMMY_SP, Highlight::EnterSpan { class: Class::Macro(span) });
-                sink(span, Highlight::Token { text, class: None });
+            TokenKind::RawIdent if self.peek_non_whitespace() == Some(TokenKind::Bang) => {
+                self.new_macro_span(text, sink, before, file_span);
                 return;
             }
             TokenKind::Ident => {
                 match get_real_ident_class(text, false) {
+                    // If it's not a keyword and the next non whitespace token is a `!`, then
+                    // we consider it's a macro.
+                    None if self.peek_non_whitespace() == Some(TokenKind::Bang) => {
+                        self.new_macro_span(text, sink, before, file_span);
+                        return;
+                    }
                     None => match text {
                         "Option" | "Result" => Class::PreludeTy(new_span(before, text, file_span)),
                         "Some" | "None" | "Ok" | "Err" => {
@@ -1249,7 +1266,18 @@ impl<'src> Classifier<'src> {
                         "self" | "Self" => Class::Self_(new_span(before, text, file_span)),
                         _ => Class::Ident(new_span(before, text, file_span)),
                     },
-                    Some(c) => c,
+                    Some(c) => {
+                        // So if it's not a keyword which can be followed by a value (like `if` or
+                        // `return`) and the next non-whitespace token is a `!`, then we consider
+                        // it's a macro.
+                        if !KEYWORDS_FOLLOWABLE_BY_VALUE.contains(&text)
+                            && self.peek_non_whitespace() == Some(TokenKind::Bang)
+                        {
+                            self.new_macro_span(text, sink, before, file_span);
+                            return;
+                        }
+                        c
+                    }
                 }
             }
             TokenKind::RawIdent | TokenKind::UnknownPrefix | TokenKind::InvalidIdent => {
