@@ -785,8 +785,11 @@ impl<'a> Iterator for TokenIter<'a> {
 
 /// Classifies into identifier class; returns `None` if this is a non-keyword identifier.
 fn get_real_ident_class(text: &str, allow_path_keywords: bool) -> Option<Class> {
-    let ignore: &[&str] =
-        if allow_path_keywords { &["self", "Self", "super", "crate"] } else { &["self", "Self"] };
+    let ignore: &[&str] = if allow_path_keywords {
+        &["self", "Self", "super", "crate", "_"]
+    } else {
+        &["self", "Self", "_"]
+    };
     if ignore.contains(&text) {
         return None;
     }
