@@ -207,7 +207,7 @@ pub(crate) fn parse_name_value<S: Stage>(
         _ => { /* not unexpected */ }
     }
 
-    Ok(CfgEntry::NameValue { name, value: value.map(|(v, _)| v), span })
+    Ok(CfgEntry::NameValue { name, value, name_span })
 }
 
 pub fn eval_config_entry(sess: &Session, cfg_entry: &CfgEntry) -> EvalConfigResult {
@@ -244,11 +244,11 @@ pub fn eval_config_entry(sess: &Session, cfg_entry: &CfgEntry) -> EvalConfigResu
                 EvalConfigResult::False { reason: cfg_entry.clone(), reason_span: *span }
             }
         }
-        CfgEntry::NameValue { name, value, span } => {
-            if sess.psess.config.contains(&(*name, *value)) {
+        CfgEntry::NameValue { name, value, .. } => {
+            if sess.psess.config.contains(&(*name, value.map(|(v, _)| v))) {
                 EvalConfigResult::True
             } else {
-                EvalConfigResult::False { reason: cfg_entry.clone(), reason_span: *span }
+                EvalConfigResult::False { reason: cfg_entry.clone(), reason_span: cfg_entry.span() }
             }
         }
         CfgEntry::Version(min_version, version_span) => {

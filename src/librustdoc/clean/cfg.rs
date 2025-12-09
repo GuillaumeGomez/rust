@@ -144,7 +144,6 @@ impl Cfg {
                         name,
                         value: None,
                         name_span: DUMMY_SP,
-                        span: DUMMY_SP,
                     })))
                 }
             }
@@ -157,7 +156,6 @@ impl Cfg {
                             name,
                             value: Some((value, DUMMY_SP)),
                             name_span: DUMMY_SP,
-                            span: DUMMY_SP,
                         })))
                     }
                 }
@@ -888,7 +886,6 @@ pub(crate) fn extract_cfg_from_attrs<'a, I: Iterator<Item = &'a hir::Attribute> 
                     name: sym::target_feature,
                     value: Some((*feature, DUMMY_SP)),
                     name_span: DUMMY_SP,
-                    span: DUMMY_SP,
                 });
             }
             continue;

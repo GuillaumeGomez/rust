@@ -192,19 +192,25 @@ pub enum CfgEntry {
     Any(ThinVec<CfgEntry>, Span),
     Not(Box<CfgEntry>, Span),
     Bool(bool, Span),
-    NameValue { name: Symbol, value: Option<Symbol>, span: Span },
+    NameValue { name: Symbol, value: Option<(Symbol, Span)>, name_span: Span },
     Version(Option<RustcVersion>, Span),
 }
 
 impl CfgEntry {
     pub fn span(&self) -> Span {
-        let (Self::All(_, span)
-        | Self::Any(_, span)
-        | Self::Not(_, span)
-        | Self::Bool(_, span)
-        | Self::NameValue { span, .. }
-        | Self::Version(_, span)) = self;
-        *span
+        match self {
+            Self::All(_, span)
+            | Self::Any(_, span)
+            | Self::Not(_, span)
+            | Self::Bool(_, span)
+            | Self::Version(_, span) => *span,
+            Self::NameValue { name_span, value, .. } => {
+                match value {
+                    Some((_, value_span)) => name_span.with_hi(value_span.hi()),
+                    None => *name_span,
+                }
+            }
+        }
     }
 
     /// Same as `PartialEq` but doesn't check spans and ignore order of cfgs.
