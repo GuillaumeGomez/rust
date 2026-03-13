@@ -2029,6 +2029,7 @@ impl<'a> DisplayStruct<'a> {
         }
 
         let def_id = it.item_id.expect_def_id();
+
         write!(
             w,
             "{}{}{}",

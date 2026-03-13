@@ -1428,6 +1428,9 @@ fn render_assoc_items_inner(
 ) -> fmt::Result {
     info!("Documenting associated items of {:?}", containing_item.name);
     let cache = &cx.shared.cache;
+    if std::env::var("LOL").is_ok() {
+        eprintln!("=====> {:#?}", cache.impls);
+    }
     let Some(v) = cache.impls.get(&it) else { return Ok(()) };
     let (mut non_trait, traits): (Vec<_>, _) =
         v.iter().partition(|i| i.inner_impl().trait_.is_none());

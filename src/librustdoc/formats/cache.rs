@@ -221,12 +221,24 @@ impl Cache {
             (krate, cache_builder.impl_ids)
         };
 
+        let debug = std::env::var("LOL").is_ok();
+        if debug {
+            eprintln!("0======> {:?} |||||||| {} {impl_ids:#?}", cx.cache.orphan_trait_impls, impl_ids.len());
+        }
         for (trait_did, dids, impl_) in cx.cache.orphan_trait_impls.drain(..) {
-            if cx.cache.traits.contains_key(&trait_did) {
-                for did in dids {
-                    if impl_ids.entry(did).or_default().insert(impl_.def_id()) {
-                        cx.cache.impls.entry(did).or_default().push(impl_.clone());
+            let contains_trait = cx.cache.traits.contains_key(&trait_did);
+            for did in dids {
+                if debug {
+                    eprintln!("1====> {did:?} {contains_trait} {:?}", !did.is_local());
+                }
+                if !contains_trait && !trait_did.is_local() && did.is_local() {
+                    cx.cache.traits.insert(trait_did);
+                }
+                if impl_ids.entry(did).or_default().insert(impl_.def_id()) {
+                    if debug {
+                        eprintln!("2====> {did:?}");
                     }
+                    cx.cache.impls.entry(did).or_default().push(impl_.clone());
                 }
             }
         }
@@ -454,7 +466,14 @@ impl DocFolder for CacheBuilder<'_, '_> {
             let impl_item = Impl { impl_item: item };
             let impl_did = impl_item.def_id();
             let trait_did = impl_item.trait_did();
+            let debug = std::env::var("LOL").is_ok();
+            if debug {
+                eprintln!("a++++++> {trait_did:?}");
+            }
             if trait_did.is_none_or(|d| self.cache.traits.contains_key(&d)) {
+                if debug {
+                    eprintln!("b++++++> {dids:?}");
+                }
                 for did in dids {
                     if self.impl_ids.entry(did).or_default().insert(impl_did) {
                         self.cache.impls.entry(did).or_default().push(impl_item.clone());
@@ -462,6 +481,9 @@ impl DocFolder for CacheBuilder<'_, '_> {
                 }
             } else {
                 let trait_did = trait_did.expect("no trait did");
+                if debug {
+                    eprintln!("c++++++> {impl_item:?}");
+                }
                 self.cache.orphan_trait_impls.push((trait_did, dids, impl_item));
             }
             None

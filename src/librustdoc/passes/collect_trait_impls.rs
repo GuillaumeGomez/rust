@@ -3,9 +3,9 @@
 //! struct implements that trait.
 
 use rustc_data_structures::fx::FxHashSet;
-use rustc_hir::attrs::{AttributeKind, DocAttribute};
+// use rustc_hir::attrs::{AttributeKind, DocAttribute};
 use rustc_hir::def_id::{DefId, DefIdMap, DefIdSet, LOCAL_CRATE};
-use rustc_hir::{Attribute, find_attr};
+// use rustc_hir::{Attribute, find_attr};
 use rustc_middle::ty;
 use tracing::debug;
 
@@ -45,7 +45,7 @@ pub(crate) fn collect_trait_impls(mut krate: Crate, cx: &mut DocContext<'_>) -> 
     };
 
     let mut new_items_external = Vec::new();
-    let mut new_items_local = Vec::new();
+    // let mut new_items_local = Vec::new();
 
     // External trait impls.
     {
@@ -60,25 +60,25 @@ pub(crate) fn collect_trait_impls(mut krate: Crate, cx: &mut DocContext<'_>) -> 
     }
 
     // Local trait impls.
-    {
-        let _prof_timer = tcx.sess.prof.generic_activity("build_local_trait_impls");
-        let mut attr_buf = Vec::new();
-        for &impl_def_id in tcx.trait_impls_in_crate(LOCAL_CRATE) {
-            let mut parent = Some(tcx.parent(impl_def_id));
-            while let Some(did) = parent {
-                attr_buf.extend(find_attr!(tcx, did, Doc(d) if !d.cfg.is_empty() => {
-                    let mut new_attr = DocAttribute::default();
-                    new_attr.cfg = d.cfg.clone();
-                    Attribute::Parsed(AttributeKind::Doc(Box::new(new_attr)))
-                }));
-                parent = tcx.opt_parent(did);
-            }
-            cx.with_param_env(impl_def_id, |cx| {
-                inline::build_impl(cx, impl_def_id, Some((&attr_buf, None)), &mut new_items_local);
-            });
-            attr_buf.clear();
-        }
-    }
+    // {
+    //     let _prof_timer = tcx.sess.prof.generic_activity("build_local_trait_impls");
+    //     let mut attr_buf = Vec::new();
+    //     for &impl_def_id in tcx.trait_impls_in_crate(LOCAL_CRATE) {
+    //         let mut parent = Some(tcx.parent(impl_def_id));
+    //         while let Some(did) = parent {
+    //             attr_buf.extend(find_attr!(tcx, did, Doc(d) if !d.cfg.is_empty() => {
+    //                 let mut new_attr = DocAttribute::default();
+    //                 new_attr.cfg = d.cfg.clone();
+    //                 Attribute::Parsed(AttributeKind::Doc(Box::new(new_attr)))
+    //             }));
+    //             parent = tcx.opt_parent(did);
+    //         }
+    //         cx.with_param_env(impl_def_id, |cx| {
+    //             inline::build_impl(cx, impl_def_id, Some((&attr_buf, None)), &mut new_items_local);
+    //         });
+    //         attr_buf.clear();
+    //     }
+    // }
 
     tcx.sess.prof.generic_activity("build_primitive_trait_impls").run(|| {
         for def_id in PrimitiveType::all_impls(tcx) {
@@ -154,7 +154,7 @@ pub(crate) fn collect_trait_impls(mut krate: Crate, cx: &mut DocContext<'_>) -> 
     }
 
     // scan through included items ahead of time to splice in Deref targets to the "valid" sets
-    for it in new_items_external.iter().chain(new_items_local.iter()) {
+    for it in new_items_external.iter() {
         if let ImplItem(box Impl { ref for_, ref trait_, ref items, .. }) = it.kind
             && trait_.as_ref().map(|t| t.def_id()) == tcx.lang_items().deref_trait()
             && cleaner.keep_impl(for_, true)
@@ -208,7 +208,6 @@ pub(crate) fn collect_trait_impls(mut krate: Crate, cx: &mut DocContext<'_>) -> 
     if let ModuleItem(Module { items, .. }) = &mut krate.module.inner.kind {
         items.extend(synth_impls);
         items.extend(new_items_external);
-        items.extend(new_items_local);
     } else {
         panic!("collect-trait-impls can't run");
     };
