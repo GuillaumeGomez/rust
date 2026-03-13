@@ -576,11 +576,6 @@ pub(crate) fn build_impl(
             clean::enter_impl_trait(cx, |cx| clean_ty_generics(cx, did)),
         ),
     };
-    let polarity = if associated_trait.is_some() {
-        tcx.impl_polarity(did)
-    } else {
-        ty::ImplPolarity::Positive
-    };
     let trait_ = associated_trait
         .map(|t| clean_trait_ref_with_constraints(cx, ty::Binder::dummy(t), ThinVec::new()));
     if trait_.as_ref().map(|t| t.def_id()) == tcx.lang_items().deref_trait() {
@@ -631,28 +626,57 @@ pub(crate) fn build_impl(
         trait_.as_ref().map(|t| t.def_id()),
         for_.def_id(&cx.cache)
     );
-    ret.push(clean::Item::from_def_id_and_attrs_and_parts(
-        did,
-        None,
-        clean::ImplItem(Box::new(clean::Impl {
-            safety: hir::Safety::Safe,
+
+    let is_deprecated =
+        tcx.lookup_deprecation(did).is_some_and(|deprecation| deprecation.is_in_effect());
+
+    let make_item = |trait_: Option<clean::Path>,
+                     for_: Type,
+                     items: Vec<Item>,
+                     generics: clean::Generics,
+                     merged_attrs: clean::Attributes,
+                     cfg: Option<Arc<clean::cfg::Cfg>>| {
+        let (polarity, safety) = match impl_item.as_ref().and_then(|impl_| impl_.of_trait) {
+            Some(of_trait) => (tcx.impl_polarity(did), of_trait.safety),
+            None => (ty::ImplPolarity::Positive, hir::Safety::Safe),
+        };
+        let kind = clean::ImplItem(Box::new(clean::Impl {
+            safety,
             generics,
             trait_,
             for_,
-            items: trait_items,
+            items,
             polarity,
             kind: if utils::has_doc_flag(tcx, did, |d| d.fake_variadic.is_some()) {
                 ImplKind::FakeVariadic
             } else {
                 ImplKind::Normal
             },
-            is_deprecated: tcx
-                .lookup_deprecation(did)
-                .is_some_and(|deprecation| deprecation.is_in_effect()),
-        })),
-        merged_attrs,
-        cfg,
-    ));
+            is_deprecated,
+        }));
+        Item::from_def_id_and_attrs_and_parts(did, None, kind, merged_attrs, cfg)
+    };
+
+    if let Some(alias_def_id) = for_.def_id(&cx.cache)
+        && matches!(tcx.def_kind(alias_def_id), DefKind::TyAlias)
+    {
+        let type_alias = clean_middle_ty(
+            ty::Binder::dummy(tcx.type_of(did).instantiate_identity()),
+            cx,
+            Some(did),
+            None,
+        );
+        ret.push(make_item(
+            trait_.clone(),
+            type_alias,
+            trait_items.clone(),
+            generics.clone(),
+            merged_attrs.clone(),
+            cfg.clone(),
+        ));
+    }
+
+    ret.push(make_item(trait_, for_, trait_items, generics, merged_attrs, cfg));
 }
 
 fn build_module(cx: &mut DocContext<'_>, did: DefId, visited: &mut DefIdSet) -> clean::Module {
@@ -820,6 +844,13 @@ fn separate_self_bounds(mut g: clean::Generics) -> (clean::Generics, Vec<clean::
 }
 
 pub(crate) fn record_extern_trait(cx: &mut DocContext<'_>, did: DefId) {
+    if std::env::var("LOL").is_ok() {
+        eprintln!(
+            "//////////> {did:?} {} {}",
+            cx.external_traits.contains_key(&did),
+            cx.active_extern_traits.contains(&did)
+        );
+    }
     if did.is_local()
         || cx.external_traits.contains_key(&did)
         || cx.active_extern_traits.contains(&did)

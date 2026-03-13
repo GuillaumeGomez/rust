@@ -2906,68 +2906,74 @@ fn clean_variant<'tcx>(variant: &hir::Variant<'tcx>, cx: &mut DocContext<'tcx>) 
 }
 
 fn clean_impl<'tcx>(
-    impl_: &hir::Impl<'tcx>,
+    _impl_: &hir::Impl<'tcx>,
     def_id: LocalDefId,
     cx: &mut DocContext<'tcx>,
 ) -> Vec<Item> {
-    let tcx = cx.tcx;
     let mut ret = Vec::new();
-    let trait_ = impl_.of_trait.map(|t| clean_trait_ref(&t.trait_ref, cx));
-    let items = impl_
-        .items
-        .iter()
-        .map(|&ii| clean_impl_item(tcx.hir_impl_item(ii), cx))
-        .collect::<Vec<_>>();
-
-    // If this impl block is an implementation of the Deref trait, then we
-    // need to try inlining the target's inherent impl blocks as well.
-    if trait_.as_ref().map(|t| t.def_id()) == tcx.lang_items().deref_trait() {
-        build_deref_target_impls(cx, &items, &mut ret);
-    }
-
-    let for_ = clean_ty(impl_.self_ty, cx);
-    let type_alias =
-        for_.def_id(&cx.cache).and_then(|alias_def_id: DefId| match tcx.def_kind(alias_def_id) {
-            DefKind::TyAlias => Some(clean_middle_ty(
-                ty::Binder::dummy(tcx.type_of(def_id).instantiate_identity()),
-                cx,
-                Some(def_id.to_def_id()),
-                None,
-            )),
-            _ => None,
-        });
-    let is_deprecated = tcx
-        .lookup_deprecation(def_id.to_def_id())
-        .is_some_and(|deprecation| deprecation.is_in_effect());
-    let mut make_item = |trait_: Option<Path>, for_: Type, items: Vec<Item>| {
-        let kind = ImplItem(Box::new(Impl {
-            safety: match impl_.of_trait {
-                Some(of_trait) => of_trait.safety,
-                None => hir::Safety::Safe,
-            },
-            generics: clean_generics(impl_.generics, cx),
-            trait_,
-            for_,
-            items,
-            polarity: if impl_.of_trait.is_some() {
-                tcx.impl_polarity(def_id)
-            } else {
-                ty::ImplPolarity::Positive
-            },
-            kind: if utils::has_doc_flag(tcx, def_id.to_def_id(), |d| d.fake_variadic.is_some()) {
-                ImplKind::FakeVariadic
-            } else {
-                ImplKind::Normal
-            },
-            is_deprecated,
-        }));
-        Item::from_def_id_and_parts(def_id.to_def_id(), None, kind, cx)
-    };
-    if let Some(type_alias) = type_alias {
-        ret.push(make_item(trait_.clone(), type_alias, items.clone()));
-    }
-    ret.push(make_item(trait_, for_, items));
+    inline::build_impl(cx, def_id.to_def_id(), None, &mut ret);
     ret
+    // let tcx = cx.tcx;
+    // let trait_ = impl_.of_trait.map(|t| {
+    //     let trait_ = clean_trait_ref(&t.trait_ref, cx);
+    //     inline::record_extern_trait(cx, trait_.def_id());
+    //     trait_
+    // });
+    // let items = impl_
+    //     .items
+    //     .iter()
+    //     .map(|&ii| clean_impl_item(tcx.hir_impl_item(ii), cx))
+    //     .collect::<Vec<_>>();
+
+    // // If this impl block is an implementation of the Deref trait, then we
+    // // need to try inlining the target's inherent impl blocks as well.
+    // if trait_.as_ref().map(|t| t.def_id()) == tcx.lang_items().deref_trait() {
+    //     build_deref_target_impls(cx, &items, &mut ret);
+    // }
+
+    // let for_ = clean_ty(impl_.self_ty, cx);
+    // let type_alias =
+    //     for_.def_id(&cx.cache).and_then(|alias_def_id: DefId| match tcx.def_kind(alias_def_id) {
+    //         DefKind::TyAlias => Some(clean_middle_ty(
+    //             ty::Binder::dummy(tcx.type_of(def_id).instantiate_identity()),
+    //             cx,
+    //             Some(def_id.to_def_id()),
+    //             None,
+    //         )),
+    //         _ => None,
+    //     });
+    // let is_deprecated = tcx
+    //     .lookup_deprecation(def_id.to_def_id())
+    //     .is_some_and(|deprecation| deprecation.is_in_effect());
+    // let mut make_item = |trait_: Option<Path>, for_: Type, items: Vec<Item>| {
+    //     let kind = ImplItem(Box::new(Impl {
+    //         safety: match impl_.of_trait {
+    //             Some(of_trait) => of_trait.safety,
+    //             None => hir::Safety::Safe,
+    //         },
+    //         generics: clean_generics(impl_.generics, cx),
+    //         trait_,
+    //         for_,
+    //         items,
+    //         polarity: if impl_.of_trait.is_some() {
+    //             tcx.impl_polarity(def_id)
+    //         } else {
+    //             ty::ImplPolarity::Positive
+    //         },
+    //         kind: if utils::has_doc_flag(tcx, def_id.to_def_id(), |d| d.fake_variadic.is_some()) {
+    //             ImplKind::FakeVariadic
+    //         } else {
+    //             ImplKind::Normal
+    //         },
+    //         is_deprecated,
+    //     }));
+    //     Item::from_def_id_and_parts(def_id.to_def_id(), None, kind, cx)
+    // };
+    // if let Some(type_alias) = type_alias {
+    //     ret.push(make_item(trait_.clone(), type_alias, items.clone()));
+    // }
+    // ret.push(make_item(trait_, for_, items));
+    // ret
 }
 
 fn clean_extern_crate<'tcx>(

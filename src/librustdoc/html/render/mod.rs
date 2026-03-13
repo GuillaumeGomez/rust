@@ -1760,7 +1760,12 @@ fn render_impl(
     fmt::from_fn(move |w| {
         let cache = &cx.shared.cache;
         let traits = &cache.traits;
-        let trait_ = i.trait_did().map(|did| &traits[&did]);
+        let trait_ = i.trait_did().map(|did| {
+            if !traits.contains_key(&did) {
+                panic!("Doesn't contain {did:?} {}", did.is_local());
+            }
+            &traits[&did]
+        });
         let mut close_tags = <Vec<&str>>::with_capacity(2);
 
         // For trait implementations, the `interesting` output contains all methods that have doc

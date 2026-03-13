@@ -426,11 +426,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
             // }
             // Bar::bar();
             // ```
-            if let hir::ItemKind::Impl(impl_) = item.kind &&
-                // Don't duplicate impls when inlining or if it's implementing a trait, we'll pick
-                // them up regardless of where they're located.
-                impl_.of_trait.is_none()
-            {
+            if let hir::ItemKind::Impl(_) = item.kind {
                 self.add_to_current_mod(item, None, None);
             }
             return;
@@ -529,10 +525,10 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     self.add_to_current_mod(item, renamed, import_id);
                 }
             }
-            hir::ItemKind::Impl(impl_) => {
-                // Don't duplicate impls when inlining or if it's implementing a trait, we'll pick
+            hir::ItemKind::Impl(_) => {
+                // Don't duplicate impls when inlining, we'll pick
                 // them up regardless of where they're located.
-                if !self.inlining && impl_.of_trait.is_none() {
+                if !self.inlining {
                     self.add_to_current_mod(item, None, None);
                 }
             }
