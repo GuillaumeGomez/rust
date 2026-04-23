@@ -348,6 +348,29 @@ impl ParseSess {
         )
     }
 
+    pub fn dyn_buffer_lint_sess<
+        F: for<'a> FnOnce(DiagCtxtHandle<'a>, Level, &Session) -> Diag<'a, ()>
+            + DynSync
+            + DynSend
+            + 'static,
+    >(
+        &self,
+        lint: &'static Lint,
+        span: impl Into<MultiSpan>,
+        node_id: NodeId,
+        callback: F,
+    ) {
+        self.opt_span_buffer_lint(
+            lint,
+            Some(span.into()),
+            node_id,
+            DecorateDiagCompat::Dynamic(Box::new(|dcx, level, sess| {
+                let sess = sess.downcast_ref::<Session>().expect("expected a `Session`");
+                callback(dcx, level, sess)
+            })),
+        )
+    }
+
     pub(crate) fn opt_span_buffer_lint(
         &self,
         lint: &'static Lint,
