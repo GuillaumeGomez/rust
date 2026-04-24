@@ -233,9 +233,11 @@ pub(crate) fn parse_name_value<S: Stage>(
                 AttributeLintKind::UnexpectedCfgValue((name, name_span), value),
                 span,
             ),
-        None if cx.sess.psess.check_config.exhaustive_names => cx.emit_lint(
+        None if cx.sess.psess.check_config.exhaustive_names => cx.emit_dyn_lint(
             UNEXPECTED_CFGS,
-            AttributeLintKind::UnexpectedCfgName((name, name_span), value),
+            move |dcx, level, sess| {
+                check_cfg::unexpected_cfg_name(sess, (name, name_span), value).into_diag(dcx, level)
+            },
             span,
         ),
         _ => { /* not unexpected */ }
