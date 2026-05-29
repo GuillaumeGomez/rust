@@ -1183,12 +1183,32 @@ fn clean_fn_decl_with_params<'tcx>(
     header: Option<&hir::FnHeader>,
     params: Vec<Parameter>,
 ) -> FnDecl {
+    // use rustc_middle::traits::ObligationCause;
+    // use rustc_trait_selection::infer::TyCtxtInferExt;
+    // use rustc_trait_selection::traits::query::normalize::QueryNormalizeExt;
+
     let mut output = match decl.output {
-        hir::FnRetTy::Return(typ) => clean_ty(typ, cx),
+        hir::FnRetTy::Return(typ) => {
+            let ty = clean_ty(typ, cx);
+            if ty == Type::Infer {
+                let type_ = lower_ty(cx.tcx, typ);
+                if !type_.has_escaping_bound_vars() {
+                    let type_ = clean_middle_ty(ty::Binder::dummy(type_), cx, None, None);
+                    eprintln!("1+++++> {type_:?}");
+                } else {
+                    let bound_vars = cx.tcx.late_bound_vars(decl.hir_id);
+                    let type_ = ty::Binder::bind_with_vars(type_, bound_vars);
+                    eprintln!("2+++++> {type_:?}");
+                }
+
+            }
+            ty
+        }
         hir::FnRetTy::DefaultReturn(..) => Type::Tuple(Vec::new()),
     };
     if let Some(header) = header
         && header.is_async()
+        && output != Type::Infer
     {
         output = output.sugared_async_return_type();
     }
