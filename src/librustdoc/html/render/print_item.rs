@@ -1296,13 +1296,13 @@ fn item_trait_alias(
 
 fn item_type_alias(cx: &Context<'_>, it: &clean::Item, t: &clean::TypeAlias) -> impl fmt::Display {
     fmt::from_fn(|w| {
+        let name = it.name.unwrap();
         wrap_item(w, |w| {
             render_attributes_in_code(w, it, "", cx)?;
             write!(
                 w,
                 "{vis}type {name}{generics}{where_clause} = {type_};",
                 vis = visibility_print_with_space(it, cx),
-                name = it.name.unwrap(),
                 generics = print_generics(&t.generics, cx),
                 where_clause =
                     print_where_clause(&t.generics, cx, 0, Ending::Newline).maybe_display(),
@@ -1455,12 +1455,12 @@ fn item_type_alias(cx: &Context<'_>, it: &clean::Item, t: &clean::TypeAlias) -> 
         // [^115718]: https://github.com/rust-lang/rust/issues/115718
         let cache = &cx.shared.cache;
         if let Some(target_did) = t.type_.def_id(cache)
-            && let get_extern = { || cache.external_paths.get(&target_did).map(|(fqp, shortty)| (fqp, *shortty)) }
-            && let Some((target_fqp, target_type)) =
-                cache.paths.get(&target_did).map(|info| (&info.parts, info.ty)).or_else(get_extern)
+            && let get_extern = { || cache.external_paths.get(&target_did) }
+            && let Some(&(ref target_fqp, target_type)) =
+                cache.paths.get(&(target_did, name)).or_else(get_extern)
             && target_type.is_adt() // primitives cannot be inlined
             && let Some(self_did) = it.item_id.as_def_id()
-            && let get_local = { || cache.paths.get(&self_did).map(|info| &info.parts) }
+            && let get_local = { || cache.paths.get(&(self_did, name)).map(|(p, _)| p) }
             && let Some(self_fqp) = cache.exact_paths.get(&self_did).or_else(get_local)
         {
             let mut js_src_path: UrlPartsBuilder =

@@ -822,9 +822,11 @@ impl TraitAliasPart {
     ) -> Result<PartsAndLocations<Self>, Error> {
         let cache = &cx.shared.cache;
         let mut path_parts = PartsAndLocations::default();
+        let tcx = cx.tcx();
         // Update the list of all implementors for traits
         // <https://github.com/search?q=repo%3Arust-lang%2Frust+[RUSTDOCIMPL]+trait.impl&type=code>
         for (&did, imps) in &cache.implementors {
+            let name = tcx.item_name(did);
             // Private modules can leak through to this phase of rustdoc, which
             // could contain implementations for otherwise private types. In some
             // rare cases we could find an implementation for an item which wasn't
@@ -833,17 +835,14 @@ impl TraitAliasPart {
             // FIXME: this is a vague explanation for why this can't be a `get`, in
             //        theory it should be...
             let (remote_path, remote_item_type) = match cache.exact_paths.get(&did) {
-                Some(p) => match cache
-                    .paths
-                    .get(&did)
-                    .map(|info| (&info.parts, info.ty))
-                    .or_else(|| cache.external_paths.get(&did).map(|(parts, ty)| (parts, *ty)))
-                {
-                    Some((_, t)) => (p, t),
-                    None => continue,
-                },
+                Some(p) => {
+                    match cache.paths.get(&(did, name)).or_else(|| cache.external_paths.get(&did)) {
+                        Some((_, t)) => (p, t),
+                        None => continue,
+                    }
+                }
                 None => match cache.external_paths.get(&did) {
-                    Some((p, t)) => (p, *t),
+                    Some((p, t)) => (p, t),
                     None => continue,
                 },
             };
@@ -879,7 +878,7 @@ impl TraitAliasPart {
             // Only create a js file if we have impls to add to it. If the trait is
             // documented locally though we always create the file to avoid dead
             // links.
-            if implementors.peek().is_none() && !cache.paths.contains_key(&did) {
+            if implementors.peek().is_none() && !cache.paths.contains_key(&(did, name)) {
                 continue;
             }
 
@@ -991,10 +990,9 @@ impl<'item> DocVisitor<'item> for TypeImplCollector<'_, '_, 'item> {
             return;
         }
         let Some(target_did) = t.type_.def_id(cache) else { return };
-        let get_extern =
-            { || cache.external_paths.get(&target_did).map(|(parts, ty)| (parts, *ty)) };
-        let Some((target_fqp, target_type)) =
-            cache.paths.get(&target_did).map(|info| (&info.parts, info.ty)).or_else(get_extern)
+        let get_extern = { || cache.external_paths.get(&target_did) };
+        let Some(&(ref target_fqp, target_type)) =
+            cache.paths.get(&(target_did, it.name.unwrap())).or_else(get_extern)
         else {
             return;
         };
@@ -1010,7 +1008,7 @@ impl<'item> DocVisitor<'item> for TypeImplCollector<'_, '_, 'item> {
                 .collect();
             AliasedType { target_fqp: &target_fqp[..], target_type, impl_ }
         });
-        let get_local = { || cache.paths.get(&self_did).map(|info| &info.parts) };
+        let get_local = { || cache.paths.get(&(self_did, it.name.unwrap())).map(|(p, _)| p) };
         let Some(self_fqp) = cache.exact_paths.get(&self_did).or_else(get_local) else {
             return;
         };

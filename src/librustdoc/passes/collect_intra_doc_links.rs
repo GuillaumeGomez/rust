@@ -1270,7 +1270,7 @@ impl LinkCollector<'_, '_> {
             return false;
         }
 
-        cache.paths.get(&did).is_some()
+        cache.paths.get(&(did, tcx.item_name(did))).is_some()
             || cache.external_paths.contains_key(&did)
             || !did.is_local()
     }

@@ -539,11 +539,26 @@ fn make_href(
     url_parts.finish()
 }
 
+fn get_path<'a>(
+    cache: &'a Cache,
+    tcx: TyCtxt<'_>,
+    def_id: DefId,
+    preferred_name: Option<Symbol>,
+) -> Option<&'a (Vec<Symbol>, ItemType)> {
+    if let Some(preferred_name) = preferred_name
+        && let Some(data) = cache.paths.get(&(def_id, preferred_name))
+    {
+        Some(data)
+    } else {
+        cache.paths.get(&(def_id, tcx.item_name(def_id)))
+    }
+}
+
 pub(crate) fn href_with_root_path(
     original_did: DefId,
     cx: &Context<'_>,
     root_path: Option<&str>,
-    preferred_name: Option<&str>,
+    preferred_name: Option<Symbol>,
 ) -> Result<HrefInfo, HrefError> {
     let tcx = cx.tcx();
     let def_kind = tcx.def_kind(original_did);
@@ -588,46 +603,35 @@ pub(crate) fn href_with_root_path(
         }
     }
 
-    let (fqp, shortty, url_parts, is_absolute) =
-        match cache.paths.get(&did) {
-            Some(info) => {
-                let path = if let Some(preferred_name) = preferred_name
-                    && let Some(alternative_path) = info.alternatives.iter().find(|path| {
-                        path.last().is_some_and(|last| last.as_str() == preferred_name)
-                    }) {
-                    alternative_path
-                } else {
-                    &info.parts
-                };
-                (
-                    path,
-                    info.ty,
-                    {
-                        let module_fqp = to_module_fqp(info.ty, info.parts.as_slice());
-                        debug!(?info.parts, ?info.ty, ?module_fqp);
-                        href_relative_parts(module_fqp, relative_to)
-                    },
-                    false,
-                )
+    let (fqp, shortty, url_parts, is_absolute) = match get_path(cache, tcx, did, preferred_name) {
+        Some(&(ref fqp, shortty)) => (
+            fqp,
+            shortty,
+            {
+                let module_fqp = to_module_fqp(shortty, fqp.as_slice());
+                debug!(?fqp, ?shortty, ?module_fqp);
+                href_relative_parts(module_fqp, relative_to)
+            },
+            false,
+        ),
+        None => {
+            // Associated items are handled differently with "jump to def". The anchor is generated
+            // directly here whereas for intra-doc links, we have some extra computation being
+            // performed there.
+            let def_id_to_get = if root_path.is_some() { original_did } else { did };
+            if let Some(&(ref fqp, shortty)) = cache.external_paths.get(&def_id_to_get) {
+                let module_fqp = to_module_fqp(shortty, fqp);
+                let (parts, is_absolute) = url_parts(cache, did, module_fqp, relative_to)?;
+                (fqp, shortty, parts, is_absolute)
+            } else if matches!(def_kind, DefKind::Macro(_)) {
+                return generate_macro_def_id_path(did, cx, root_path);
+            } else if did.is_local() {
+                return Err(HrefError::Private);
+            } else {
+                return generate_item_def_id_path(did, original_did, cx, root_path);
             }
-            None => {
-                // Associated items are handled differently with "jump to def". The anchor is generated
-                // directly here whereas for intra-doc links, we have some extra computation being
-                // performed there.
-                let def_id_to_get = if root_path.is_some() { original_did } else { did };
-                if let Some(&(ref fqp, shortty)) = cache.external_paths.get(&def_id_to_get) {
-                    let module_fqp = to_module_fqp(shortty, fqp);
-                    let (parts, is_absolute) = url_parts(cache, did, module_fqp, relative_to)?;
-                    (fqp, shortty, parts, is_absolute)
-                } else if matches!(def_kind, DefKind::Macro(_)) {
-                    return generate_macro_def_id_path(did, cx, root_path);
-                } else if did.is_local() {
-                    return Err(HrefError::Private);
-                } else {
-                    return generate_item_def_id_path(did, original_did, cx, root_path);
-                }
-            }
-        };
+        }
+    };
     Ok(HrefInfo {
         url: make_href(root_path, shortty, url_parts, fqp, is_absolute),
         kind: shortty,
@@ -642,7 +646,7 @@ pub(crate) fn href(did: DefId, cx: &Context<'_>) -> Result<HrefInfo, HrefError> 
 pub(crate) fn href_with_path_check(
     did: DefId,
     cx: &Context<'_>,
-    text: &str,
+    text: Symbol,
 ) -> Result<HrefInfo, HrefError> {
     href_with_root_path(did, cx, None, Some(text))
 }
@@ -682,41 +686,28 @@ pub(crate) fn link_tooltip(
     did: DefId,
     fragment: &Option<UrlFragment>,
     cx: &Context<'_>,
-    preferred_name: Option<&str>,
+    preferred_name: Option<Symbol>,
 ) -> impl fmt::Display {
     fmt::from_fn(move |f| {
         let cache = cx.cache();
-        let Some((fqp, shortty)) = cache
-            .paths
-            .get(&did)
-            .map(|info| {
-                if let Some(preferred_name) = preferred_name
-                    && let Some(path) = info.alternatives.iter().find(|path| {
-                        path.last().is_some_and(|last| last.as_str() == preferred_name)
-                    })
-                {
-                    (path, info.ty)
-                } else {
-                    (&info.parts, info.ty)
-                }
-            })
-            .or_else(|| cache.external_paths.get(&did).map(|(fqp, shortty)| (fqp, *shortty)))
+        let tcx = cx.tcx();
+        let Some((fqp, shortty)) =
+            get_path(cache, tcx, did, preferred_name).or_else(|| cache.external_paths.get(&did))
         else {
             return Ok(());
         };
-        let fqp = if shortty == ItemType::Primitive {
+        let fqp = if *shortty == ItemType::Primitive {
             // primitives are documented in a crate, but not actually part of it
             slice::from_ref(fqp.last().unwrap())
         } else {
             fqp
         };
         if let &Some(UrlFragment::Item(id)) = fragment {
-            let tcx = cx.tcx();
             write!(f, "{} ", tcx.def_descr(id))?;
             for component in fqp {
                 write!(f, "{component}::")?;
             }
-            if shortty == ItemType::Enum && tcx.def_kind(id) == DefKind::Field {
+            if *shortty == ItemType::Enum && tcx.def_kind(id) == DefKind::Field {
                 write!(f, "{}::", tcx.item_name(tcx.parent(id)))?;
             }
             write!(f, "{}", tcx.item_name(id))?;

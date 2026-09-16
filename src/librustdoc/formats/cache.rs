@@ -18,27 +18,6 @@ use crate::formats::item_type::ItemType;
 use crate::html::render::{IndexItem, IndexItemInfo};
 use crate::visit_lib::RustdocEffectiveVisibilities;
 
-pub(crate) struct PathInfo {
-    /// Parts of the path. So in `foo::bar::bib`, it will be `["foo", "bar", "bib"]`.
-    pub(crate) parts: Vec<Symbol>,
-    pub(crate) ty: ItemType,
-    /// When a reexport inline an item, we can end up with the same `DefId` with multiple local
-    /// targets. So in case like:
-    ///
-    /// ```
-    /// /// Link to [`a2`].
-    /// pub use std::ffi::os_str::OsString as a1;
-    /// /// Link to [`a1`].
-    /// pub use std::ffi::os_str::OsString as a2;
-    /// /// Link to [`a2`].
-    /// pub use std::ffi::os_str::OsString as a3;
-    /// ```
-    ///
-    /// To ensure that `a1` and `a2` links to `a1` and `a2` which have the same `DefId`, we need
-    /// to store both paths.
-    pub(crate) alternatives: Vec<Vec<Symbol>>,
-}
-
 /// This cache is used to store information about the [`clean::Crate`] being
 /// rendered in order to provide more useful documentation. This contains
 /// information like all implementors of a trait, all traits a type implements,
@@ -63,7 +42,7 @@ pub(crate) struct Cache {
     /// URLs when a type is being linked to. External paths are not located in
     /// this map because the `External` type itself has all the information
     /// necessary.
-    pub(crate) paths: FxIndexMap<DefId, PathInfo>,
+    pub(crate) paths: FxIndexMap<(DefId, Symbol), (Vec<Symbol>, ItemType)>,
 
     /// Similar to `paths`, but only holds external paths. This is only used for
     /// generating explicit hyperlinks to other crates.
@@ -389,35 +368,23 @@ impl DocFolder for CacheBuilder<'_, '_> {
                 );
 
                 if (!self.cache.stripped_mod && !skip_because_unstable) || self.is_json_output {
-                    // Re-exported items mean that the same id can show up twice
-                    // in the rustdoc ast that we're looking at. We know,
-                    // however, that a re-exported item doesn't show up in the
-                    // `public_items` map, so we can skip inserting into the
-                    // paths map if there was already an entry present and we're
-                    // not a public item.
-                    let item_def_id = item.item_id.expect_def_id();
-                    match self.cache.paths.entry(item_def_id) {
-                        Entry::Vacant(entry) => {
-                            entry.insert(PathInfo {
-                                parts: self.cache.stack.clone(),
-                                ty: item.type_(),
-                                alternatives: Vec::new(),
-                            });
-                        }
-                        Entry::Occupied(mut entry) => {
-                            // Shorter paths are preferred by default.
-                            if entry.get().parts.len() > self.cache.stack.len() {
-                                let old_parts = std::mem::replace(
-                                    &mut entry.get_mut().parts,
-                                    self.cache.stack.clone(),
-                                );
-                                // We only keep the old path if it's a different (final) name.
-                                if old_parts.last() != self.cache.stack.last() {
-                                    entry.get_mut().alternatives.push(old_parts);
-                                }
+                    if let Some(name) = self.cache.stack.last() {
+                        // Re-exported items mean that the same id can show up twice
+                        // in the rustdoc ast that we're looking at. We know,
+                        // however, that a re-exported item doesn't show up in the
+                        // `public_items` map, so we can skip inserting into the
+                        // paths map if there was already an entry present and we're
+                        // not a public item.
+                        let item_def_id = item.item_id.expect_def_id();
+                        match self.cache.paths.entry((item_def_id, *name)) {
+                            Entry::Vacant(entry) => {
+                                entry.insert((self.cache.stack.clone(), item.type_()));
                             }
-                            if !entry.get().alternatives.contains(&self.cache.stack) {
-                                entry.get_mut().alternatives.push(self.cache.stack.clone());
+                            Entry::Occupied(mut entry) => {
+                                // Shorter paths are preferred.
+                                if entry.get().0.len() > self.cache.stack.len() {
+                                    entry.insert((self.cache.stack.clone(), item.type_()));
+                                }
                             }
                         }
                     }
@@ -601,8 +568,8 @@ fn add_item_to_search_index(tcx: TyCtxt<'_>, cache: &mut Cache, item: &clean::It
             // We accomplish the last two points by recording children of "orphan impls"
             // in a field of the cache whose elements are added to the search index later,
             // after cache building is complete (see `handle_orphan_impl_child`).
-            match cache.paths.get(&parent_did) {
-                Some(info) => (Some(parent_did), &info.parts[..info.parts.len() - 1]),
+            match cache.paths.get(&(parent_did, name)) {
+                Some((fqp, _)) => (Some(parent_did), &fqp[..fqp.len() - 1]),
                 None => {
                     handle_orphan_impl_child(cache, item, parent_did);
                     return;

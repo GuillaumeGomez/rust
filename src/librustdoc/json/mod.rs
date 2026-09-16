@@ -113,8 +113,8 @@ impl<'tcx> JsonRenderer<'tcx> {
             .cache
             .paths
             .iter()
-            .map(|(k, info)| (k, (&info.parts, info.ty)))
-            .chain(self.cache.external_paths.iter().map(|(k, (parts, ty))| (k, (parts, *ty))))
+            .map(|((k, _), info)| (k, info))
+            .chain(&self.cache.external_paths)
             .map(|(&k, (path, kind))| {
                 (
                     self.id_from_item_default(k.into()),
@@ -195,10 +195,9 @@ impl<'tcx> JsonRenderer<'tcx> {
     fn cached_path(&self, item_id: DefId) -> Option<Vec<String>> {
         self.cache
             .paths
-            .get(&item_id)
-            .map(|info| &info.parts)
-            .or_else(|| self.cache.external_paths.get(&item_id).map(|(parts, _)| parts))
-            .map(|path| path.iter().map(|name| name.to_string()).collect())
+            .get(&(item_id, self.tcx.item_name(item_id)))
+            .or_else(|| self.cache.external_paths.get(&item_id))
+            .map(|(path, _)| path.iter().map(|name| name.to_string()).collect())
     }
 }
 

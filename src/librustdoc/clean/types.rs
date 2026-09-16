@@ -609,7 +609,8 @@ impl Item {
             .iter()
             .filter_map(|ItemLink { link: s, link_text, page_id: id, fragment }| {
                 debug!(?id);
-                if let Ok(HrefInfo { mut url, .. }) = href_with_path_check(*id, cx, link_text) {
+                let s_link_text = Symbol::intern(link_text);
+                if let Ok(HrefInfo { mut url, .. }) = href_with_path_check(*id, cx, s_link_text) {
                     debug!(?url);
                     match fragment {
                         Some(UrlFragment::Item(def_id)) => {
@@ -625,7 +626,7 @@ impl Item {
                     Some(RenderedLink {
                         original_text: s.clone(),
                         new_text: link_text.clone(),
-                        tooltip: link_tooltip(*id, fragment, cx, Some(link_text)).to_string(),
+                        tooltip: link_tooltip(*id, fragment, cx, Some(s_link_text)).to_string(),
                         href: url,
                     })
                 } else {

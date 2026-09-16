@@ -48,7 +48,7 @@ impl Impl {
         let for_type = &self.inner_impl().for_;
         if let Some(for_type_did) = for_type.def_id(cache) {
             // The "for" type is local if it's in the paths for the current crate.
-            if cache.paths.contains_key(&for_type_did) {
+            if cache.paths.contains_key(&(for_type_did, cx.tcx().item_name(for_type_did))) {
                 return true;
             }
             if let Some(trait_did) = self.trait_did() {
